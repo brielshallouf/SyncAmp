@@ -1,11 +1,12 @@
 // Command syncamp is a cross-platform (Windows/Linux) supervisor for the
 // Syncrify backup client: it runs as an OS service and is fully operable from
 // the command line on headless machines. The tray UI is a separate binary
-// (syncamp-tray) so the privileged service carries no GUI code.
+// (syncamp-app) so the privileged service carries no GUI code.
 package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"log"
@@ -23,6 +24,7 @@ import (
 	"github.com/brielshallouf/syncamp/internal/core"
 	"github.com/brielshallouf/syncamp/internal/logrotate"
 	"github.com/brielshallouf/syncamp/internal/platform"
+	"github.com/brielshallouf/syncamp/internal/svcclient"
 )
 
 var version = "dev"
@@ -32,7 +34,8 @@ const usage = `syncamp - supervisor for Syncrify backups (service + CLI)
 Usage: syncamp [-config FILE] <command> [args]
 
 Service
-  install | uninstall      install/remove the service (needs Administrator/root)
+  install | uninstall      install/remove the service (needs Administrator/root); install is safe to repeat
+  grant ACCOUNT            let that account's desktop app talk to the service (install does this for you)
   start | stop | restart   control the installed service
   run                      run in the foreground (what the service executes)
 
@@ -82,6 +85,15 @@ func (p *program) Start(service.Service) error {
 		return fmt.Errorf("api token: %w", err)
 	}
 	cfg := e.Config()
+	// Publish the address and re-apply the account grants (rewriting a file resets its
+	// permissions, so this runs on every start). Failures are logged, never fatal.
+	addrPath, tokenPath := filepath.Join(dir, svcclient.AddrFile), filepath.Join(dir, auth.FileName)
+	if err := platform.WriteSecret(addrPath, []byte(cfg.ListenAddr+"\n")); err != nil {
+		log.Printf("write %s: %v", addrPath, err)
+	}
+	for _, err := range platform.ApplyGrants(dir, tokenPath, addrPath) {
+		log.Print(err)
+	}
 	ctx, cancel := context.WithCancel(context.Background())
 	p.cancel, p.done = cancel, make(chan struct{})
 	e.Start(ctx)
@@ -152,17 +164,17 @@ func run() int {
 		}
 		return fail(svc.Run())
 	case "install":
+		return cmdInstall(svc, *cfgPath, rest)
+	case "grant":
+		if len(rest) != 1 {
+			fmt.Fprintln(os.Stderr, "usage: syncamp grant ACCOUNT   (lets that account's desktop app talk to the service)")
+			return 2
+		}
 		dir := filepath.Dir(*cfgPath)
-		if err := platform.SecureDir(dir); err != nil {
+		if err := platform.AddGrant(dir, rest[0], filepath.Join(dir, auth.FileName), filepath.Join(dir, svcclient.AddrFile)); err != nil {
 			return fail(err)
 		}
-		if _, err := auth.LoadOrCreate(dir); err != nil {
-			return fail(err)
-		}
-		if err := service.Control(svc, "install"); err != nil {
-			return fail(err)
-		}
-		fmt.Println("installed. Next: syncamp doctor && syncamp start && syncamp status")
+		fmt.Println("granted:", rest[0])
 		return 0
 	case "uninstall", "start", "stop", "restart":
 		if err := service.Control(svc, cmd); err != nil {
@@ -218,5 +230,48 @@ func fail(err error) int {
 		fmt.Fprintln(os.Stderr, "error:", err)
 		return 1
 	}
+	return 0
+}
+
+// cmdInstall registers the service (once), creates the locked-down data folder and key, and
+// grants the account that ran it access so its desktop app works without any sign-in.
+func cmdInstall(svc service.Service, cfgPath string, args []string) int {
+	fs := flag.NewFlagSet("install", flag.ExitOnError)
+	grant := fs.String("grant", "", "also give this account access (default: the account running install)")
+	noGrant := fs.Bool("no-grant", false, "do not grant any account access")
+	_ = fs.Parse(args)
+
+	dir := filepath.Dir(cfgPath)
+	if err := platform.SecureDir(dir); err != nil {
+		return fail(err)
+	}
+	if _, err := auth.LoadOrCreate(dir); err != nil {
+		return fail(err)
+	}
+	cfg, _ := config.Load(cfgPath)
+	addrPath, tokenPath := filepath.Join(dir, svcclient.AddrFile), filepath.Join(dir, auth.FileName)
+	if err := platform.WriteSecret(addrPath, []byte(cfg.ListenAddr+"\n")); err != nil {
+		return fail(err)
+	}
+	if _, err := svc.Status(); errors.Is(err, service.ErrNotInstalled) {
+		if err := service.Control(svc, "install"); err != nil {
+			return fail(err)
+		}
+		fmt.Println("service installed")
+	} else {
+		fmt.Println("service already installed (left as is)")
+	}
+	account := *grant
+	if account == "" && !*noGrant {
+		account = platform.InvokingAccount()
+	}
+	if account != "" {
+		if err := platform.AddGrant(dir, account, tokenPath, addrPath); err != nil {
+			fmt.Fprintf(os.Stderr, "warning: could not grant %s access (the app will ask for the key instead): %v\n", account, err)
+		} else {
+			fmt.Println("granted desktop-app access to:", account)
+		}
+	}
+	fmt.Println("Next: syncamp doctor && syncamp start && syncamp status")
 	return 0
 }

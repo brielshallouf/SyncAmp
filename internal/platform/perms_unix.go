@@ -5,6 +5,9 @@ package platform
 import (
 	"fmt"
 	"os"
+	"os/exec"
+	"runtime"
+	"strings"
 	"syscall"
 )
 
@@ -75,4 +78,33 @@ func parentOf(p string) string {
 		}
 	}
 	return "/"
+}
+
+// grantRead gives account read access to files (and traverse access to dir) with POSIX ACLs.
+// If the ACL tools are missing it returns an error that the caller reports; nothing else breaks.
+func grantRead(dir, account string, files []string) error {
+	if runtime.GOOS == "darwin" {
+		return nil // the service already runs as the user
+	}
+	bin, err := exec.LookPath("setfacl")
+	if err != nil {
+		return fmt.Errorf("setfacl not found (install the 'acl' package) so the app cannot be granted access")
+	}
+	run := func(spec, path string) error {
+		if out, err := exec.Command(bin, "-m", "u:"+account+":"+spec, path).CombinedOutput(); err != nil {
+			return fmt.Errorf("setfacl %s: %v: %s", path, err, strings.TrimSpace(string(out)))
+		}
+		return nil
+	}
+	if err := run("x", dir); err != nil { // traverse only: the folder's other files stay private
+		return err
+	}
+	for _, f := range files {
+		if _, err := os.Stat(f); err == nil {
+			if err := run("r", f); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
 }

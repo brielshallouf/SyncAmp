@@ -56,7 +56,7 @@ func TestSecureDirAndWriteSecretLockDownACLs(t *testing.T) {
 }
 
 func TestScreenAndWorkAreaReadable(t *testing.T) {
-	screen, work, ok := screenAndWorkArea()
+	screen, work, ok := ScreenAndWorkArea()
 	if !ok {
 		t.Skip("no interactive desktop on this runner")
 	}

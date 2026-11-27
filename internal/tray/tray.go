@@ -4,82 +4,90 @@ package tray
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
-	"net/http"
+	"runtime"
 	"time"
 
 	"fyne.io/systray"
 
-	"github.com/brielshallouf/syncamp/internal/platform"
+	"github.com/brielshallouf/syncamp/internal/native"
+	"github.com/brielshallouf/syncamp/internal/svcclient"
 )
 
-type status struct {
-	Overall string `json:"overall"`
-	Summary string `json:"summary"`
+// Run shows the notification-area icon and blocks until the user quits. On Windows,
+// clicking the icon opens the app's own window (pop); there is no browser and no URL
+// anywhere. On other systems the icon offers a native menu.
+func Run(client *svcclient.Client, pop *native.Popover) {
+	systray.Run(func() { onReady(client, pop) }, func() {})
 }
 
-// Run shows the tray icon and blocks until the user quits. base is the
-// service API root, e.g. http://127.0.0.1:5801.
-func Run(base, token string) {
-	systray.Run(func() { onReady(base, token) }, func() {})
-}
-
-func onReady(base, token string) {
+func onReady(client *svcclient.Client, pop *native.Popover) {
 	systray.SetIcon(iconFor("unknown"))
 	systray.SetTitle("SyncAmp")
 	systray.SetTooltip("SyncAmp: connecting…")
+
+	open := func() {
+		if err := pop.Toggle(); err != nil && !errors.Is(err, native.ErrUnsupported) {
+			native.Notify("SyncAmp", err.Error())
+		}
+	}
+	hasWindow := runtime.GOOS == "windows"
+	if hasWindow {
+		pop.Warm() // create the window in the background so the first click is instant
+		systray.SetOnTapped(open)
+	}
+
 	mStatus := systray.AddMenuItem("Connecting…", "Current backup status")
 	mStatus.Disable()
 	systray.AddSeparator()
-	mOpen := systray.AddMenuItem("Open dashboard", "")
-	mRun := systray.AddMenuItem("Run all backups now", "")
-	if token == "" {
-		mRun.SetTitle("Run all backups (needs administrator)")
-		mRun.Disable()
+	var mOpen *systray.MenuItem
+	if hasWindow {
+		mOpen = systray.AddMenuItem("Open SyncAmp", "")
 	}
+	mRun := systray.AddMenuItem("Back up all now", "")
 	systray.AddSeparator()
-	mQuit := systray.AddMenuItem("Quit tray", "The SyncAmp service keeps running")
+	mQuit := systray.AddMenuItem("Quit SyncAmp", "The background service keeps running")
 
-	client := &http.Client{Timeout: 5 * time.Second}
-	post := func(path string) {
-		req, _ := http.NewRequest(http.MethodPost, base+path, nil)
-		req.Header.Set("Authorization", "Bearer "+token)
-		if resp, err := client.Do(req); err == nil {
-			resp.Body.Close()
-		}
-	}
 	poll := func() {
-		resp, err := client.Get(base + "/api/summary")
-		if err != nil {
+		r := client.Do("GET", "/api/summary", "")
+		var st struct{ Overall, Summary string }
+		if r.Status != 200 || json.Unmarshal([]byte(r.Body), &st) != nil {
 			systray.SetIcon(iconFor("unknown"))
-			systray.SetTooltip("SyncAmp service not reachable")
-			mStatus.SetTitle("Service not reachable")
-			return
-		}
-		defer resp.Body.Close()
-		var st status
-		if json.NewDecoder(resp.Body).Decode(&st) != nil {
+			systray.SetTooltip("SyncAmp: the background service is not running")
+			mStatus.SetTitle("Service not running")
 			return
 		}
 		systray.SetIcon(iconFor(st.Overall))
 		tip := fmt.Sprintf("SyncAmp: %s", st.Summary)
 		systray.SetTooltip(tip)
 		mStatus.SetTitle(tip)
+		if client.Token() == "" {
+			mRun.SetTitle("Back up all now (needs access: run `syncamp grant <you>`)")
+			mRun.Disable()
+		} else {
+			mRun.SetTitle("Back up all now")
+			mRun.Enable()
+		}
 	}
 	go func() {
 		poll()
-		t := time.NewTicker(5 * time.Second)
-		for range t.C {
+		for range time.Tick(5 * time.Second) {
 			poll()
 		}
 	}()
+
+	openCh := (<-chan struct{})(nil)
+	if mOpen != nil {
+		openCh = mOpen.ClickedCh
+	}
 	go func() {
 		for {
 			select {
-			case <-mOpen.ClickedCh:
-				_ = platform.OpenPanel(base + "/")
+			case <-openCh:
+				open()
 			case <-mRun.ClickedCh:
-				post("/api/run")
+				client.Do("POST", "/api/run", "")
 				poll()
 			case <-mQuit.ClickedCh:
 				systray.Quit()

@@ -9,14 +9,14 @@ import (
 	"runtime"
 )
 
-const name = "SyncAmpTray"
+const name = "SyncAmp"
 
-// Enable makes `exe tray` start at login for the current user.
+// Enable makes the app (`exe`) start at login for the current user.
 func Enable(exe string) error {
 	switch runtime.GOOS {
 	case "windows":
 		return exec.Command("reg", "add", `HKCU\Software\Microsoft\Windows\CurrentVersion\Run`,
-			"/v", name, "/t", "REG_SZ", "/d", fmt.Sprintf(`"%s" tray`, exe), "/f").Run()
+			"/v", name, "/t", "REG_SZ", "/d", fmt.Sprintf(`"%s"`, exe), "/f").Run()
 	default:
 		dir, err := os.UserConfigDir()
 		if err != nil {
@@ -26,8 +26,8 @@ func Enable(exe string) error {
 		if err := os.MkdirAll(dir, 0o755); err != nil {
 			return err
 		}
-		entry := fmt.Sprintf("[Desktop Entry]\nType=Application\nName=SyncAmp Tray\nExec=%q tray\nX-GNOME-Autostart-enabled=true\n", exe)
-		return os.WriteFile(filepath.Join(dir, "syncamp-tray.desktop"), []byte(entry), 0o644)
+		entry := fmt.Sprintf("[Desktop Entry]\nType=Application\nName=SyncAmp\nExec=%q\nX-GNOME-Autostart-enabled=true\n", exe)
+		return os.WriteFile(filepath.Join(dir, "syncamp-app.desktop"), []byte(entry), 0o644)
 	}
 }
 
@@ -40,7 +40,7 @@ func Disable() error {
 	if err != nil {
 		return err
 	}
-	err = os.Remove(filepath.Join(dir, "autostart", "syncamp-tray.desktop"))
+	err = os.Remove(filepath.Join(dir, "autostart", "syncamp-app.desktop"))
 	if os.IsNotExist(err) {
 		return nil
 	}

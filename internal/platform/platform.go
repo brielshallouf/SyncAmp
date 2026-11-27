@@ -3,9 +3,7 @@
 package platform
 
 import (
-	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"runtime"
 )
@@ -111,47 +109,6 @@ func FindClient() string {
 		}
 	}
 	return ""
-}
-
-// OpenBrowser opens url in the user's default browser.
-func OpenBrowser(url string) error {
-	switch runtime.GOOS {
-	case "windows":
-		return exec.Command("rundll32", "url.dll,FileProtocolHandler", url).Start()
-	case "darwin":
-		return exec.Command("open", url).Start()
-	default:
-		return exec.Command("xdg-open", url).Start()
-	}
-}
-
-// OpenPanel opens url as a compact chromeless "app" window (Edge on Windows,
-// Chromium-family on Linux) so the dashboard feels like a tray popover. On
-// Windows it is placed next to the taskbar, whichever edge that is docked to.
-// It falls back to the default browser. No secrets are ever put on the
-// command line (other local users can read process arguments).
-func OpenPanel(url string) error {
-	const w, h, margin = 400, 680, 12
-	args := []string{"--app=" + url}
-	if screen, work, ok := screenAndWorkArea(); ok {
-		x, y, height, _ := PlacePanel(screen, work, w, h, margin)
-		args = append(args, fmt.Sprintf("--window-size=%d,%d", w, height), fmt.Sprintf("--window-position=%d,%d", x, y))
-	} else {
-		args = append(args, fmt.Sprintf("--window-size=%d,%d", w, h))
-	}
-	switch runtime.GOOS {
-	case "windows":
-		if err := exec.Command("cmd", append([]string{"/c", "start", "", "msedge"}, args...)...).Start(); err == nil {
-			return nil
-		}
-	case "linux":
-		for _, b := range []string{"chromium", "chromium-browser", "google-chrome", "google-chrome-stable", "microsoft-edge", "brave-browser"} {
-			if p, err := exec.LookPath(b); err == nil {
-				return exec.Command(p, args...).Start()
-			}
-		}
-	}
-	return OpenBrowser(url)
 }
 
 // SharedDataCandidates are GUESSES at where the Syncrify client keeps its "shared

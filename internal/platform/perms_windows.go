@@ -3,6 +3,7 @@
 package platform
 
 import (
+	"fmt"
 	"os"
 	"os/exec"
 	"syscall"
@@ -51,3 +52,20 @@ func IsRoot() bool                            { return false }
 // UntrustedWritable is not evaluated on Windows (ACL inspection needs the
 // Win32 security API); `doctor` tells the admin to check Program Files ACLs.
 func UntrustedWritable(string) (bool, string) { return false, "" }
+
+// grantRead lets account list the folder (this folder only, not inherited) and read the given
+// files. The folder's other files (config, history, log) stay administrator-only.
+func grantRead(dir, account string, files []string) error {
+	if err := icacls(dir, "/grant", account+":(RX)"); err != nil {
+		return fmt.Errorf("icacls %s: %w", dir, err)
+	}
+	for _, f := range files {
+		if _, err := os.Stat(f); err != nil {
+			continue
+		}
+		if err := icacls(f, "/grant", account+":(R)"); err != nil {
+			return fmt.Errorf("icacls %s: %w", f, err)
+		}
+	}
+	return nil
+}

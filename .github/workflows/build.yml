@@ -30,6 +30,38 @@ jobs:
           path: dist/*
           retention-days: 30
 
+  # ONE installer for Windows: service + app + autostart. It is built here and then really
+  # installed, exercised and uninstalled on this Windows machine, so a broken installer can
+  # never be published.
+  windows-installer:
+    needs: build
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: syncamp-binaries
+          path: dist
+      - name: Build SyncAmp-Setup.exe
+        shell: pwsh
+        run: |
+          $iscc = (Get-Command iscc -ErrorAction SilentlyContinue).Source
+          if (-not $iscc) { $c = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"; if (Test-Path $c) { $iscc = $c } }
+          if (-not $iscc) { choco install innosetup -y --no-progress; $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" }
+          Write-Host "Inno Setup: $iscc"
+          $ver = (git describe --tags --always)
+          & $iscc "/DAppVersion=$ver" installer\windows\SyncAmp.iss
+          if ($LASTEXITCODE -ne 0) { throw "iscc failed" }
+          Get-Item dist\SyncAmp-Setup.exe | Format-List Name, Length
+      - name: Smoke-test - install, run the service and the app window, uninstall
+        shell: pwsh
+        run: ./installer/windows/smoke-test.ps1
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: syncamp-installer
+          path: dist/SyncAmp-Setup.exe
+          retention-days: 30
+
   # The SwiftUI menu-bar app. A failure here must not block the Windows/Linux builds;
   # if the Mac zip is missing from a release, read this job's log.
   macos-app:

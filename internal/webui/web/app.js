@@ -3,8 +3,18 @@
 // never as markup: profile names come from user-writable files.
 const $ = id => document.getElementById(id);
 let token = null;
+// Native mode: running inside the desktop app's own window. There is no server URL, no sign-in and no
+// network access from the page; the app injects syncampStart(), which performs the request in Go (with the
+// access token attached there) and answers asynchronously through syncampDone(). The async hand-off matters:
+// bound functions run on the UI thread, so a slow request must never block inside them.
+const native = typeof window.syncampStart === 'function';
+const pending = {}; let seq = 0;
+window.syncampDone = (id, status, body) => { const p = pending[id]; delete pending[id]; if (p) p({ status, body }); };
+function nativeCall(method, path, body) {
+  return new Promise(resolve => { const id = ++seq; pending[id] = resolve; window.syncampStart(id, method, path, body || ''); });
+}
 const open = new Set();   // expanded profile rows survive the 5 s refresh
-try { token = sessionStorage.getItem('syncamp-token'); } catch (e) {}
+if (native) token = 'native'; else { try { token = sessionStorage.getItem('syncamp-token'); } catch (e) {} }
 
 function el(tag, text, cls) {
   const n = document.createElement(tag);
@@ -23,6 +33,11 @@ function ago(t) {
   return Math.round(s / 86400) + ' days ago';
 }
 async function api(path, method, body) {
+  if (native) {
+    const r = await nativeCall(method || 'GET', path, body ? JSON.stringify(body) : '');
+    if (r.status === 401) throw new Error('auth');
+    try { return JSON.parse(r.body); } catch (e) { return {}; }
+  }
   const headers = token ? { Authorization: 'Bearer ' + token } : {};
   if (body) headers['Content-Type'] = 'application/json';
   const r = await fetch(path, { method: method || 'GET', headers, body: body ? JSON.stringify(body) : undefined });
@@ -30,6 +45,11 @@ async function api(path, method, body) {
   return r.json();
 }
 function signOut(msg) {
+  if (native) { // nothing to sign out of: the app holds the access itself
+    $('login').hidden = false; $('app').hidden = true; $('topactions').hidden = true;
+    $('loginerr').textContent = msg || "SyncAmp can't read the background service's access key on this account. Reinstall SyncAmp, or run `syncamp grant <your user name>` as an administrator.";
+    return;
+  }
   token = null; try { sessionStorage.removeItem('syncamp-token'); } catch (x) {}
   $('login').hidden = false; $('app').hidden = true; $('topactions').hidden = true; $('loginerr').textContent = msg || '';
 }
@@ -125,7 +145,7 @@ function fill(ul, rows, emptyText) {
 
 async function load() {
   try {
-    const sum = await (await fetch('/api/summary')).json();
+    const sum = await api('/api/summary');
     if (!token) { setHero(sum.overall, sum.summary); return signOut(); }
     const s = await api('/api/status'), h = await api('/api/history');
     mode = s.mode || 'monitor';
@@ -144,6 +164,10 @@ async function load() {
     fill($('history'), h.slice(0, 5).map(historyItem), 'No activity yet');
     $('runall').disabled = !s.profiles.length;
     $('meta').textContent = s.os + ' · up ' + s.uptime;
+    if (typeof window.syncampReport === 'function' && !window.__reported) {
+      window.__reported = true;
+      window.syncampReport(JSON.stringify({ headline: $('headline').textContent, profiles: s.profiles.length, signedIn: !$('app').hidden, mode: s.mode }));
+    }
   } catch (e) {
     if (e.message === 'auth') signOut('Token rejected');
     else setHero('unknown', '', 'Cannot reach the SyncAmp service');
@@ -158,4 +182,14 @@ $('token').addEventListener('keydown', e => { if (e.key === 'Enter') $('signin')
 $('signout').addEventListener('click', () => { signOut(); load(); });
 $('runall').addEventListener('click', async () => { await api('/api/run', 'POST'); load(); });
 $('reload').addEventListener('click', async () => { await api('/api/reload', 'POST'); load(); });
+if (native) {
+  $('signout').hidden = true; $('token').hidden = true; $('signin').hidden = true;
+  document.querySelector('#login h2').textContent = 'Not connected';
+  document.querySelector('#login .sub').textContent = '';
+  // Behave like a popover: dismiss on focus loss or Escape.
+  if (typeof window.syncampHide === 'function') {
+    window.addEventListener('blur', () => window.syncampHide());
+    window.addEventListener('keydown', e => { if (e.key === 'Escape') window.syncampHide(); });
+  }
+}
 load(); setInterval(load, 5000);

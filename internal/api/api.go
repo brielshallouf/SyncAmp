@@ -13,7 +13,6 @@
 package api
 
 import (
-	"embed"
 	"encoding/json"
 	"errors"
 	"net"
@@ -24,15 +23,13 @@ import (
 	"github.com/brielshallouf/syncamp/internal/core"
 	"github.com/brielshallouf/syncamp/internal/profiles"
 	"github.com/brielshallouf/syncamp/internal/store"
+	"github.com/brielshallouf/syncamp/internal/webui"
 )
 
-//go:embed web
-var web embed.FS
-
 var static = map[string]string{
-	"/":          "web/index.html",
-	"/app.js":    "web/app.js",
-	"/style.css": "web/style.css",
+	"/":          "index.html",
+	"/app.js":    "app.js",
+	"/style.css": "style.css",
 }
 
 var ctype = map[string]string{
@@ -129,7 +126,7 @@ func Handler(e *core.Engine, token string) http.Handler {
 			pattern = "GET /{$}"
 		}
 		mux.HandleFunc(pattern, func(w http.ResponseWriter, r *http.Request) {
-			b, _ := web.ReadFile(file)
+			b, _ := webui.File(file)
 			w.Header().Set("Content-Type", ctype[path])
 			_, _ = w.Write(b)
 		})
