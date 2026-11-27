@@ -218,7 +218,8 @@ func TestScheduleEndpoint(t *testing.T) {
 	if c := post(h, "/api/profiles/Nope/schedule", `{"preset":"hourly"}`, tok).Code; c != 404 {
 		t.Errorf("unknown profile: %d", c)
 	}
-	if st, err := os.Stat(e.CfgPath()); err != nil || st.Mode().Perm()&0o077 != 0 {
+	// Unix mode bits only exist off Windows; the Windows ACL lockdown is covered in internal/platform.
+	if st, err := os.Stat(e.CfgPath()); err != nil || (runtime.GOOS != "windows" && st.Mode().Perm()&0o077 != 0) {
 		t.Errorf("config must stay owner-only after API edits: %v %v", st, err)
 	}
 	raw, _ := os.ReadFile(e.CfgPath())
