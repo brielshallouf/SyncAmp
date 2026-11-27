@@ -43,7 +43,7 @@ Source: "..\..\SECURITY.md"; DestDir: "{app}"; Flags: ignoreversion
 ; Off by default on purpose: the background service runs as SYSTEM and a Syncrify profile can run scripts,
 ; so watching a folder YOU can write to lets anything running as you start a script as SYSTEM.
 ; Tick it on a personal PC where you accept that, or use `syncamp watch FOLDER` later.
-Name: "watchprofiles"; Description: "Let SyncAmp see my Syncrify profiles in {userprofile}\.syncrify (personal PC)"; GroupDescription: "Syncrify profiles:"; Flags: unchecked
+Name: "watchprofiles"; Description: "Let SyncAmp see my Syncrify profiles in {%USERPROFILE}\.syncrify (personal PC)"; GroupDescription: "Syncrify profiles:"; Flags: unchecked
 
 [Icons]
 Name: "{autoprograms}\SyncAmp"; Filename: "{app}\{#AppExe}"
@@ -108,7 +108,7 @@ begin
     { Only when the box was ticked. Written as nested ifs on purpose: never rely on short-circuit evaluation here. }
     if ok then
       if WizardIsTaskSelected('watchprofiles') then
-        if Svc('watch "' + ExpandConstant('{userprofile}') + '\.syncrify"') <> 0 then
+        if Svc('watch "' + ExpandConstant('{%USERPROFILE}') + '\.syncrify"') <> 0 then
           MsgBox('SyncAmp installed, but could not add your Syncrify profile folder. Run "syncamp watch <folder>" later.', mbError, MB_OK);
 
     if ok then
