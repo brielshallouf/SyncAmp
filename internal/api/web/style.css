@@ -52,7 +52,7 @@ hr{border:0;border-top:1px solid var(--line);margin:14px 0 0}
 .row:hover{background:var(--chip)}
 .item.open{background:var(--chip)}.item.open>.row:hover{background:none}
 .dot{flex:none;width:10px;height:10px;border-radius:50%;background:var(--unknown)}
-.dot.success{background:var(--ok)}.dot.failed,.dot.timeout{background:var(--bad)}.dot.running{background:var(--run);animation:pulse 1.2s ease-in-out infinite}
+.dot.success{background:var(--ok)}.dot.warning{background:var(--warn)}.dot.failed,.dot.timeout{background:var(--bad)}.dot.running{background:var(--run);animation:pulse 1.2s ease-in-out infinite}
 .dot.paused{background:transparent;border:2px solid var(--unknown)}
 @keyframes pulse{50%{opacity:.35}}
 .grow{flex:1;min-width:0}.grow b{display:block;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}

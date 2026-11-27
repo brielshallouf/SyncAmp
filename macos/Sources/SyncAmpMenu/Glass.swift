@@ -33,7 +33,7 @@ enum Tone {
         switch state {
         case "ok", "success": return .green
         case "running": return .blue
-        case "warn": return .orange
+        case "warn", "warning": return .orange
         case "error", "failed", "timeout": return .red
         default: return .gray
         }

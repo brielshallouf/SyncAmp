@@ -80,6 +80,9 @@ func Check(cfgPath string, cfg config.Config) []Finding {
 			add(Info, "scanAllUserHomes is on: backups run as each profile's owner, not root")
 		}
 	}
+	if cfg.Scheduling != "off" {
+		add(Info, "SyncAmp schedules backups itself. If the Syncrify client service or Task Scheduler/cron/launchd also runs these profiles they will collide (the client locks a profile, so the second run is reported as a warning). Disable one side, or set scheduling to \"off\" to only monitor and run on demand.")
+	}
 	if len(cfg.FailurePatterns) == 0 {
 		add(Warn, "no failurePatterns: a client that prints an error but exits 0 will be recorded as success")
 	}

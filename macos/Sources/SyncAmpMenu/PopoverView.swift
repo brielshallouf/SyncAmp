@@ -101,6 +101,7 @@ struct PopoverView: View {
         guard let l = p.last else { return p.scheduled ? "Waiting for first run" : "Manual · never run" }
         switch l.status {
         case "success": return "Succeeded \(relative(l.end))"
+        case "warning": return "Finished with warnings \(relative(l.end))"
         case "timeout": return "Timed out \(relative(l.end))"
         default: return "Failed \(relative(l.end))" + (l.error.map { " · \($0)" } ?? "")
         }

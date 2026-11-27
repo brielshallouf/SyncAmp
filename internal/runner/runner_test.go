@@ -4,6 +4,7 @@ package runner
 
 import (
 	"context"
+	"github.com/brielshallouf/syncamp/internal/config"
 	"os"
 	"strings"
 	"testing"
@@ -92,5 +93,45 @@ func TestPrivilegeDropToProfileOwner(t *testing.T) {
 	out := strings.Join(r.Tail, "\n")
 	if r.Status != "success" || !strings.HasPrefix(out, "65534") {
 		t.Errorf("child must run as uid 65534; status=%s err=%s out=%q", r.Status, r.Error, out)
+	}
+}
+
+// Lines below are the product's own wording, taken from the message strings in
+// Syncrify's resource bundle (LOG_*/ERROR_*/STS_* keys).
+func TestDefaultPatternsAgainstRealSyncrifyMessages(t *testing.T) {
+	d := config.Default()
+	opts := func(line string) Options {
+		return Options{ClientPath: "/bin/sh", Args: []string{"-c", "echo \"$0\"", line}, Timeout: 5 * time.Second,
+			FailRegex: Compile(d.FailurePatterns), WarnRegex: Compile(d.WarnPatterns)}
+	}
+	cases := map[string]string{
+		"Backup completed in 2 minutes": "success",
+		"Total errors: 0":               "success",
+		"Backup started on Nov 27 and completed with one or more error.":            "warning",
+		"Unable to lock profile. Make sure another backup session is NOT running":   "warning",
+		"A previous backup run has locked the current profile, which was last":      "warning",
+		"Backup started on Nov 27 but encountered one or more errors.":              "failed",
+		"Backup failed to run for profile: Documents":                               "failed",
+		"Unable to connect to the server backup.lan. Please make sure":              "failed",
+		"Authentication failed. Ensure email and password are correctly specified.": "failed",
+		"Unable to backup C:\\x.doc. Error: access denied":                          "failed",
+		"Syncrify server ran out of client licenses. Please purchase":               "failed",
+		"Internal server error has occurred. Refer to the logs for details.":        "failed",
+	}
+	for line, want := range cases {
+		if got := Run(context.Background(), "p", "/x", "manual", opts(line)).Status; got != want {
+			t.Errorf("%q: got %s want %s", line, got, want)
+		}
+	}
+}
+
+func TestFailureWinsOverWarning(t *testing.T) {
+	d := config.Default()
+	r := Run(context.Background(), "p", "/x", "manual", Options{ClientPath: "/bin/sh",
+		Args:      []string{"-c", "echo 'completed with one or more error.'; echo 'Unable to connect to the server'"},
+		Timeout:   5 * time.Second,
+		FailRegex: Compile(d.FailurePatterns), WarnRegex: Compile(d.WarnPatterns)})
+	if r.Status != "failed" {
+		t.Errorf("got %s", r.Status)
 	}
 }

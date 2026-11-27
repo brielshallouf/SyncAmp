@@ -40,7 +40,7 @@ function setHero(overall, summary, sub) {
   $('headline').textContent = HEAD[overall] || 'SyncAmp';
   $('subline').textContent = sub || summary || '';
 }
-const outcome = s => s === 'success' ? 'Succeeded' : s === 'timeout' ? 'Timed out' : 'Failed';
+const outcome = s => s === 'success' ? 'Succeeded' : s === 'warning' ? 'Finished with warnings' : s === 'timeout' ? 'Timed out' : 'Failed';
 
 const PRESETS = [['hourly', 'Hourly'], ['every6h', 'Every 6 h'], ['daily', 'Daily']];
 async function schedule(name, body) { try { await api('/api/profiles/' + encodeURIComponent(name) + '/schedule', 'POST', body); } catch (e) {} load(); }

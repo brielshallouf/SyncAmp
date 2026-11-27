@@ -29,6 +29,7 @@ type Options struct {
 	Args       []string // "{profile}" is substituted
 	Timeout    time.Duration
 	FailRegex  []*regexp.Regexp
+	WarnRegex  []*regexp.Regexp // finished with errors / profile busy: status "warning", not a failure
 	// RunAs, when set (unix, service is root), drops the child to this account
 	// so a backup can only read what the profile's owner could read.
 	RunAs *Cred
@@ -100,7 +101,7 @@ func Run(ctx context.Context, name, profilePath, trigger string, o Options) stor
 		return finish("failed", err.Error())
 	}
 	var tail []string
-	matched := ""
+	matched, warned := "", ""
 	sc := bufio.NewScanner(pr)
 	sc.Buffer(make([]byte, 64*1024), 1024*1024)
 	for sc.Scan() {
@@ -109,6 +110,14 @@ func Run(ctx context.Context, name, profilePath, trigger string, o Options) stor
 			for _, re := range o.FailRegex {
 				if re.MatchString(line) {
 					matched = clip(Redact(line))
+					break
+				}
+			}
+		}
+		if warned == "" {
+			for _, re := range o.WarnRegex {
+				if re.MatchString(line) {
+					warned = clip(Redact(line))
 					break
 				}
 			}
@@ -131,6 +140,8 @@ func Run(ctx context.Context, name, profilePath, trigger string, o Options) stor
 		return finish("failed", werr.Error())
 	case matched != "":
 		return finish("failed", "output indicates failure: "+matched)
+	case warned != "":
+		return finish("warning", warned)
 	}
 	return finish("success", "")
 }

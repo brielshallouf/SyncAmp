@@ -41,6 +41,8 @@ type Config struct {
 	DefaultTimes    []string            `json:"defaultTimes"`    // used when a profile has days but no time
 	JobTimeout      string              `json:"jobTimeout"`      // per backup, e.g. "12h"
 	FailurePatterns []string            `json:"failurePatterns"` // regexes in client output that mean failure
+	WarnPatterns    []string            `json:"warnPatterns"`    // regexes that mean "finished, but with errors" (not a failure)
+	Scheduling      string              `json:"scheduling"`      // "auto" (SyncAmp starts scheduled backups) or "off" (monitor + manual only)
 	Webhook         string              `json:"webhook,omitempty"`
 	HistoryLimit    int                 `json:"historyLimit"`
 	Server          Server              `json:"server"`
@@ -59,10 +61,29 @@ func Default() Config {
 		ClientArgs:   []string{"-console", "{profile}"},
 		DefaultTimes: []string{"02:00"},
 		JobTimeout:   "12h",
+		// Taken from the message strings shipped in Syncrify's own resource bundle
+		// (SyncrifyBundle_en.properties). Whether the console client prints each of
+		// them to stdout (vs only its log file) is unverified; tune against real output.
 		FailurePatterns: []string{
-			`(?i)backup failed`, `(?i)unable to connect`, `(?i)authentication failed`,
-			`(?i)connection refused`, `(?i)login failed`,
+			`(?i)backup failed to run`,
+			`(?i)but encountered one or more errors`,
+			`(?i)unable to connect to the server`,
+			`(?i)authentication failed`,
+			`(?i)unable to backup `,
+			`(?i)unable to read backup profile`,
+			`(?i)ran out of client licenses`,
+			`(?i)internal server error`,
+			`(?i)unexpected error occurred when connecting`,
+			`(?i)connection refused`,
 		},
+		// Syncrify's own "Success with errors" outcome, and its profile lock (another
+		// run - e.g. the client's built-in scheduler - already holds the profile).
+		WarnPatterns: []string{
+			`(?i)completed with one or more error`,
+			`(?i)unable to lock profile`,
+			`(?i)has locked the current profile`,
+		},
+		Scheduling:   "auto",
 		HistoryLimit: 500,
 		Server:       Server{CheckInterval: "1m"},
 	}
@@ -87,9 +108,12 @@ func (c Config) Validate() error {
 	if c.ClientPath != "" && !filepath.IsAbs(c.ClientPath) {
 		return errors.New("clientPath must be an absolute path (no PATH lookup for privileged execution)")
 	}
-	for _, p := range c.FailurePatterns {
+	if c.Scheduling != "" && c.Scheduling != "auto" && c.Scheduling != "off" {
+		return fmt.Errorf("scheduling must be \"auto\" or \"off\", got %q", c.Scheduling)
+	}
+	for _, p := range append(append([]string{}, c.FailurePatterns...), c.WarnPatterns...) {
 		if _, err := regexp.Compile(p); err != nil {
-			return fmt.Errorf("failurePattern %q: %w", p, err)
+			return fmt.Errorf("pattern %q: %w", p, err)
 		}
 	}
 	for _, t := range c.DefaultTimes {

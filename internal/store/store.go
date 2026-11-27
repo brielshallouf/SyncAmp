@@ -17,7 +17,7 @@ type Run struct {
 	Profile  string    `json:"profile"`
 	Start    time.Time `json:"start"`
 	End      time.Time `json:"end"`
-	Status   string    `json:"status"` // success | failed | timeout
+	Status   string    `json:"status"` // success | warning | failed | timeout
 	ExitCode int       `json:"exitCode"`
 	Trigger  string    `json:"trigger"` // schedule | manual
 	Error    string    `json:"error,omitempty"`

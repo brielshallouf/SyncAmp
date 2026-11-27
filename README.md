@@ -14,7 +14,7 @@ encryption and server compatibility.
 
 From Synametrics' documentation:
 
-- **Transport:** the client talks to the server over HTTP(S) (default web port 80; 5800 is a common alternative). All server administration is through its web UI.
+- **Transport:** the client talks to the server over HTTP(S) (the server build we inspected ships with HTTP on port **5800** and HTTPS not configured: see [docs/SYNCRIFY-NOTES.md](docs/SYNCRIFY-NOTES.md)). All server administration is through its web UI.
 - **Efficiency:** the rsync algorithm sends only changed *deltas* within files.
 - **Profiles:** a backup job is a *profile*, an XML file with extension `.syncrify` stored in the user's `~/.syncrify` folder. Profiles are created in the client GUI. The schedule lives inside as `schedulerDays`, a weekday bitmap (Sun+Tue+Thu = `0010101` = 21; bit *n* = weekday *n*, Sunday = 0). Secrets like `encryptionKey` must never be hand-edited.
 - **Running:** since v3.3 the client can run as a Windows service; the older "integrated" client used Windows Task Scheduler (deprecated). Headless: `SyncrifyClient.exe <profile>` on Windows, `SyncrifyClient.sh <profile>` on Linux, or `java -jar SyncrifyClient.jar -console <profile>`.
@@ -130,6 +130,7 @@ All shipped binaries (Windows/Linux × amd64/arm64) scan clean with `govulncheck
 - **macOS: the Swift app has NOT been compiled or run** (no Swift/macOS toolchain in the build sandbox). The Go service cross-compiles for macOS (arm64/amd64) and scans clean, but the LaunchAgent install and Syncrify's macOS install paths are unverified. Run `./build-app.sh` (it runs the Swift unit tests first) and report any compile errors.
 - **Compiles but untested on a real Windows host:** the Windows service path, `icacls` ACL hardening (`internal/platform/perms_windows.go`), the tray (ICO icon, `reg add` autostart), and the console-hiding/`taskkill` process-tree code.
 - **Untested here:** the hardened systemd unit (no systemd in the build sandbox) — run `systemctl status syncamp` after install and report any sandbox denial.
-- **Never tested with a real Syncrify client/server.** The profile XML schema beyond `schedulerDays` is inferred; `failurePatterns` are heuristics to tune against real client output.
+- **Never run against a live Syncrify client/server.** `failurePatterns`/`warnPatterns` now use the product's own message strings (from the installer you provided), but whether the console client prints them to stdout is unverified, and the profile XML element names beyond `schedulerDays` are still unknown, so SyncAmp still uses `defaultTimes` for time of day. See [docs/SYNCRIFY-NOTES.md](docs/SYNCRIFY-NOTES.md).
+- **Schedule collisions:** the Syncrify client service schedules profiles itself. Use `"scheduling": "off"` (or disable one side) so backups are not started twice.
 - Slots missed while the service was *stopped* are not replayed (only sleep/late ticks are).
 - Not implemented: MSI installer, code signing, restore verification. Out of scope by design: Syncrify server administration.

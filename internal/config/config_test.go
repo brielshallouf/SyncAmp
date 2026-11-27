@@ -72,3 +72,23 @@ func TestSaveIsOwnerOnlyAndRoundTrips(t *testing.T) {
 		t.Error("Save must refuse invalid config")
 	}
 }
+
+func TestSchedulingValidation(t *testing.T) {
+	for _, ok := range []string{"", "auto", "off"} {
+		c := Default()
+		c.Scheduling = ok
+		if err := c.Validate(); err != nil {
+			t.Errorf("%q rejected: %v", ok, err)
+		}
+	}
+	c := Default()
+	c.Scheduling = "sometimes"
+	if c.Validate() == nil {
+		t.Error("bad scheduling accepted")
+	}
+	c = Default()
+	c.WarnPatterns = []string{"("}
+	if c.Validate() == nil {
+		t.Error("bad warn pattern accepted")
+	}
+}

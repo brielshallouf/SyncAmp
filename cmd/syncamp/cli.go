@@ -182,8 +182,10 @@ func cmdBackup(cfgPath string, args []string) int {
 			if p.Running {
 				busy = true
 			} else if p.Last != nil && p.Last.Start.After(startedAt) && p.Last.Status != "success" {
-				bad = true
 				fmt.Fprintf(os.Stderr, "%s: %s: %s\n", p.Name, p.Last.Status, p.Last.Error)
+				if p.Last.Status != "warning" {
+					bad = true // warnings are reported but do not fail scripts
+				}
 			}
 		}
 		if !busy {
@@ -283,7 +285,7 @@ func cmdConfig(cfgPath string, args []string) int {
 		fmt.Println("config is valid")
 	case "set":
 		if len(args) != 3 {
-			fmt.Fprintln(os.Stderr, "usage: syncamp config set KEY VALUE\nkeys: webhook, server.url, server.checkInterval, clientPath, jobTimeout, defaultTimes (comma separated)")
+			fmt.Fprintln(os.Stderr, "usage: syncamp config set KEY VALUE\nkeys: webhook, server.url, server.checkInterval, clientPath, jobTimeout, scheduling (auto|off), defaultTimes (comma separated)")
 			return 2
 		}
 		cfg, err := config.LoadRaw(cfgPath)
@@ -303,6 +305,8 @@ func cmdConfig(cfgPath string, args []string) int {
 			cfg.ClientPath = v
 		case "jobTimeout":
 			cfg.JobTimeout = v
+		case "scheduling":
+			cfg.Scheduling = v
 		case "defaultTimes":
 			cfg.DefaultTimes = splitList(v)
 		default:

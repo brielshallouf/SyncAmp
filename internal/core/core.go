@@ -101,6 +101,10 @@ func (e *Engine) scheduleLoop(ctx context.Context) {
 			e.mu.RLock()
 			profs := append([]profiles.Profile(nil), e.profs...)
 			e.mu.RUnlock()
+			if e.Config().Scheduling == "off" {
+				prev = now
+				continue
+			}
 			for _, p := range profs {
 				spec, ok := e.specFor(p)
 				if !ok {
@@ -183,7 +187,7 @@ func (e *Engine) RunProfile(name, trigger string) error {
 		log.Printf("backup %q started (%s)", name, trigger)
 		opts := runner.Options{
 			ClientPath: cfg.ClientPath, Args: cfg.ClientArgs,
-			Timeout: config.Dur(cfg.JobTimeout, 12*time.Hour), FailRegex: runner.Compile(cfg.FailurePatterns),
+			Timeout: config.Dur(cfg.JobTimeout, 12*time.Hour), FailRegex: runner.Compile(cfg.FailurePatterns), WarnRegex: runner.Compile(cfg.WarnPatterns),
 		}
 		// Least privilege: a root service runs each backup as the profile's
 		// owner, so a profile can never cause files to be read that its owner
@@ -307,7 +311,7 @@ func (e *Engine) Status() Status {
 		}
 	}
 	st.Profiles = []ProfileStatus{} // JSON [] not null, for every client
-	failed, running := 0, 0
+	failed, warned, running := 0, 0, 0
 	for _, p := range profs {
 		ps := ProfileStatus{Name: p.Name, Path: p.Path, Running: e.running[p.Name]}
 		spec, sched := e.specForLocked(p)
@@ -330,8 +334,11 @@ func (e *Engine) Status() Status {
 		if r, ok := e.hist.Last(p.Name); ok {
 			rr := r
 			ps.Last = &rr
-			if r.Status != "success" {
+			switch r.Status {
+			case "failed", "timeout":
 				failed++
+			case "warning":
+				warned++
 			}
 		}
 		if ps.Running {
@@ -352,6 +359,8 @@ func (e *Engine) Status() Status {
 		st.Overall, st.Summary = "warn", "Syncrify client not found"
 	case len(profs) == 0:
 		st.Overall, st.Summary = "warn", "No Syncrify profiles found"
+	case warned > 0:
+		st.Overall, st.Summary = "warn", fmt.Sprintf("%d profile(s) finished with warnings", warned)
 	case hasLevel(st.Findings, audit.Warn):
 		st.Overall, st.Summary = "warn", "security warnings: run `syncamp doctor`"
 	default:
