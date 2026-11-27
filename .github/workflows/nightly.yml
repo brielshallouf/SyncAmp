@@ -1,0 +1,45 @@
+name: nightly
+# Every push to main (and to claude/* working branches) refreshes ONE rolling pre-release
+# called "nightly" with the newest executables, so the latest build is always downloadable
+# without tagging. Stable versions come from release.yml (tags).
+on:
+  push:
+    branches: [main, "claude/**"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: nightly
+  cancel-in-progress: true
+
+jobs:
+  build:
+    uses: ./.github/workflows/build.yml
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write   # only this job may touch releases
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: syncamp-binaries
+          path: release
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        continue-on-error: true
+        with:
+          name: syncamp-macos-app
+          path: release
+      - name: Replace the rolling "nightly" pre-release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BRANCH: ${{ github.ref_name }}
+        run: |
+          cd release && rm -f SHA256SUMS && sha256sum * > SHA256SUMS && cd ..
+          gh release delete nightly --cleanup-tag --yes --repo "$GITHUB_REPOSITORY" || true
+          gh release create nightly release/* --repo "$GITHUB_REPOSITORY" --prerelease \
+            --target "$GITHUB_SHA" --title "Latest development build" \
+            --notes "Automatic build of \`$BRANCH\` at commit ${GITHUB_SHA::7}. Executables are unsigned. This pre-release is replaced on every push; use a numbered release for something stable. Verify files with SHA256SUMS."

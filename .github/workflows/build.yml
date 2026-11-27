@@ -1,0 +1,50 @@
+name: build
+# Reusable: tests, builds every platform, scans the binaries, uploads them as artifacts.
+# Called by release.yml (tags) and nightly.yml (pushes).
+on:
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
+        with:
+          go-version-file: go.mod
+      - name: Test and build all platforms
+        run: make dist
+      - name: Scan the shipped binaries for known vulnerabilities
+        run: |
+          go install golang.org/x/vuln/cmd/govulncheck@latest
+          for b in dist/syncamp-*; do
+            case "$b" in *SHA256SUMS) continue;; esac
+            echo "== $b"; "$(go env GOPATH)/bin/govulncheck" -mode=binary "$b"
+          done
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: syncamp-binaries
+          path: dist/*
+          retention-days: 30
+
+  # The SwiftUI menu-bar app. A failure here must not block the Windows/Linux builds;
+  # if the Mac zip is missing from a release, read this job's log.
+  macos-app:
+    runs-on: macos-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - name: Build SyncAmp.app (runs the Swift unit tests first)
+        working-directory: macos
+        run: ./build-app.sh
+      - name: Zip the app
+        working-directory: macos/dist
+        run: ditto -c -k --keepParent SyncAmp.app SyncAmp-macos.zip
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: syncamp-macos-app
+          path: macos/dist/SyncAmp-macos.zip
+          retention-days: 30
