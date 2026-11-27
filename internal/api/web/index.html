@@ -1,17 +1,43 @@
 <!doctype html>
-<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>SyncAmp</title><link rel="stylesheet" href="/style.css"></head><body><main>
-<h1>SyncAmp <span id="overall" class="pill">…</span></h1>
-<div class="card" id="login" hidden>
-  <h2>Sign in</h2>
-  <p class="mut">Paste the API token. Print it on the server with <code>syncamp token</code> (administrator/root only).</p>
-  <input id="token" type="password" autocomplete="off" placeholder="API token"> <button id="signin">Sign in</button>
-  <div id="loginerr" class="mut"></div>
-</div>
-<div id="app" hidden>
-  <div class="card"><div id="summary"></div><div class="mut" id="meta"></div><ul id="findings"></ul></div>
-  <div class="card"><h2>Profiles</h2><table id="profiles"></table>
-  <p><button id="runall">Run all now</button> <button id="reload">Rescan profiles</button> <button id="signout">Sign out</button></p></div>
-  <div class="card"><h2>Recent runs</h2><table id="history"></table></div>
-</div>
-</main><script src="/app.js"></script></body></html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="color-scheme" content="light dark">
+<title>SyncAmp</title><link rel="stylesheet" href="/style.css"></head>
+<body><div class="bg" aria-hidden="true"></div>
+<main>
+  <header class="hero glass">
+    <div id="ring" class="ring unknown" aria-hidden="true"><span id="glyph">·</span></div>
+    <div class="hero-text">
+      <h1 id="headline">SyncAmp</h1>
+      <p id="subline" class="muted">Connecting…</p>
+    </div>
+  </header>
+
+  <section id="login" class="glass card" hidden>
+    <h2>Sign in</h2>
+    <p class="muted small">Paste the API token. On the server, run <code>syncamp token</code> (administrator / owner only).</p>
+    <div class="row-inline">
+      <input id="token" type="password" autocomplete="off" placeholder="API token" aria-label="API token">
+      <button id="signin" class="btn primary">Sign in</button>
+    </div>
+    <p id="loginerr" class="small bad"></p>
+  </section>
+
+  <div id="app" hidden>
+    <ul id="notices" class="notices"></ul>
+
+    <h2 class="section">Backups</h2>
+    <ul id="profiles" class="list glass"></ul>
+
+    <div class="actions">
+      <button id="runall" class="btn primary">Back up all now</button>
+      <button id="reload" class="btn">Rescan</button>
+      <button id="signout" class="btn ghost">Sign out</button>
+    </div>
+
+    <h2 class="section">Activity</h2>
+    <ul id="history" class="list glass"></ul>
+    <p id="meta" class="muted small foot"></p>
+  </div>
+</main>
+<script src="/app.js"></script></body></html>

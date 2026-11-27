@@ -1,3 +1,5 @@
+//go:build !darwin
+
 // Package tray renders the system-tray UI. Icons are generated at runtime so
 // the repo carries no binary assets.
 package tray

@@ -272,6 +272,7 @@ type ProfileStatus struct {
 	Path      string     `json:"path"`
 	Running   bool       `json:"running"`
 	Scheduled bool       `json:"scheduled"`
+	Paused    bool       `json:"paused"` // explicitly disabled in config
 	Last      *store.Run `json:"last,omitempty"`
 }
 
@@ -303,10 +304,14 @@ func (e *Engine) Status() Status {
 			st.Findings = append(st.Findings, f)
 		}
 	}
+	st.Profiles = []ProfileStatus{} // JSON [] not null, for every client
 	failed, running := 0, 0
 	for _, p := range profs {
 		ps := ProfileStatus{Name: p.Name, Path: p.Path, Running: e.running[p.Name]}
 		_, ps.Scheduled = e.specForLocked(p)
+		if ov := e.cfg.Profiles[p.Name]; ov.Enabled != nil && !*ov.Enabled {
+			ps.Paused = true
+		}
 		if r, ok := e.hist.Last(p.Name); ok {
 			rr := r
 			ps.Last = &rr

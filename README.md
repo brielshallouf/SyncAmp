@@ -1,6 +1,6 @@
 # SyncAmp
 
-A cross-platform (Windows + Linux) service and system-tray app that supervises the
+A cross-platform (Windows, macOS, Linux) service with a glass-style dashboard and native tray / menu-bar apps that supervises the
 [Syncrify](https://web.synametrics.com/) backup client: scheduling, monitoring,
 failure detection and alerts, with one binary and one config on every OS.
 
@@ -69,6 +69,20 @@ Everything is scriptable from the CLI:
 
 Desktop users can additionally run `syncamp-tray` (and `syncamp-tray autostart on`) for the status icon.
 
+## macOS (menu-bar app, Liquid Glass)
+
+On a Mac the service runs as **your own LaunchAgent** (no root): your `~/.syncrify` profiles are found by default, backups run with your rights, and the API token in `~/Library/Application Support/SyncAmp` is readable only by you, so the menu-bar app can show full status and start backups.
+
+```
+syncamp install && syncamp start          # per-user LaunchAgent
+cd macos && ./build-app.sh                # needs Xcode 15+; Xcode 26 enables Liquid Glass
+open dist/SyncAmp.app                     # menu-bar only (no Dock icon); ⋯ menu → Launch at login
+```
+
+The app is SwiftUI with **zero third-party dependencies**: `glassEffect` on macOS 26 (Tahoe), system materials on macOS 14–15. Click the menu-bar icon for the popover: a state ring, one row per backup with a play button, "Back up all", and a ⋯ menu (dashboard, launch at login, quit).
+
+The same design language powers the web dashboard (`http://127.0.0.1:5801/`) used on Windows/Linux and over SSH tunnels.
+
 ## Configuration
 
 `%ProgramData%\SyncAmp\config.json` (Windows) or `/var/lib/syncamp/config.json` (Linux); `syncamp init` writes defaults. Unknown keys are rejected (a typo in a security option must not be silently ignored).
@@ -110,6 +124,7 @@ All shipped binaries (Windows/Linux × amd64/arm64) scan clean with `govulncheck
 ## Status / limitations
 
 - **Verified (Linux):** unit tests incl. race detector; end-to-end with a stub client covering CLI, exit codes, token auth, symlink refusal, redaction, privilege drop to the profile owner, refusal of a world-writable client, fail-closed config, startup permission repair; vulnerability scans of all binaries.
+- **macOS: the Swift app has NOT been compiled or run** (no Swift/macOS toolchain in the build sandbox). The Go service cross-compiles for macOS (arm64/amd64) and scans clean, but the LaunchAgent install and Syncrify's macOS install paths are unverified. Run `./build-app.sh` (it runs the Swift unit tests first) and report any compile errors.
 - **Compiles but untested on a real Windows host:** the Windows service path, `icacls` ACL hardening (`internal/platform/perms_windows.go`), the tray (ICO icon, `reg add` autostart), and the console-hiding/`taskkill` process-tree code.
 - **Untested here:** the hardened systemd unit (no systemd in the build sandbox) — run `systemctl status syncamp` after install and report any sandbox denial.
 - **Never tested with a real Syncrify client/server.** The profile XML schema beyond `schedulerDays` is inferred; `failurePatterns` are heuristics to tune against real client output.

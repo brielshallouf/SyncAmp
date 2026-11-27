@@ -1,65 +1,97 @@
 'use strict';
 // All server-provided strings are inserted with textContent / createElement,
-// never innerHTML: profile names come from user-writable files.
+// never as markup: profile names come from user-writable files.
 const $ = id => document.getElementById(id);
 let token = null;
 try { token = sessionStorage.getItem('syncamp-token'); } catch (e) {}
 
 function el(tag, text, cls) {
   const n = document.createElement(tag);
-  if (text !== undefined) n.textContent = text;
+  if (text !== undefined && text !== null) n.textContent = text;
   if (cls) n.className = cls;
   return n;
 }
-const fmt = t => (t && !t.startsWith('0001')) ? new Date(t).toLocaleString() : '—';
-
+const valid = t => t && !t.startsWith('0001');
+function ago(t) {
+  if (!valid(t)) return 'never';
+  const s = Math.max(0, (Date.now() - new Date(t)) / 1000);
+  if (s < 45) return 'just now';
+  if (s < 3600) return Math.round(s / 60) + ' min ago';
+  if (s < 86400) return Math.round(s / 3600) + ' h ago';
+  if (s < 172800) return 'yesterday';
+  return Math.round(s / 86400) + ' days ago';
+}
 async function api(path, method) {
   const r = await fetch(path, { method: method || 'GET', headers: token ? { Authorization: 'Bearer ' + token } : {} });
   if (r.status === 401) throw new Error('auth');
   return r.json();
 }
-function row(table, cells, header) {
-  const tr = el('tr');
-  cells.forEach(c => {
-    const cell = el(header ? 'th' : 'td');
-    if (c instanceof Node) cell.appendChild(c); else cell.textContent = c;
-    tr.appendChild(cell);
-  });
-  table.appendChild(tr);
-}
-function pill(status) { return el('span', status, 'pill ' + status); }
-function showLogin(msg) {
+function signOut(msg) {
+  token = null; try { sessionStorage.removeItem('syncamp-token'); } catch (x) {}
   $('login').hidden = false; $('app').hidden = true; $('loginerr').textContent = msg || '';
+}
+const GLYPH = { ok: '✓', running: '↻', warn: '!', error: '✕', unknown: '·' };
+const HEAD = { ok: 'All backups healthy', running: 'Backing up…', warn: 'Needs a look', error: 'Needs attention' };
+
+function setHero(overall, summary, sub) {
+  const ring = $('ring'); ring.className = 'ring ' + overall; $('glyph').textContent = GLYPH[overall] || '·';
+  $('headline').textContent = HEAD[overall] || 'SyncAmp';
+  $('subline').textContent = sub || summary || '';
+}
+function profileRow(p) {
+  const li = el('li');
+  const state = p.running ? 'running' : p.paused ? 'paused' : p.last ? p.last.status : 'unknown';
+  li.appendChild(el('span', '', 'dot ' + state));
+  const g = el('div', '', 'grow'); g.appendChild(el('b', p.name));
+  let line;
+  if (p.running) line = 'Backing up now…';
+  else if (p.paused) line = 'Paused';
+  else if (!p.last) line = p.scheduled ? 'Waiting for first run' : 'Manual · never run';
+  else line = (p.last.status === 'success' ? 'Succeeded ' : p.last.status === 'timeout' ? 'Timed out ' : 'Failed ') + ago(p.last.end);
+  g.appendChild(el('span', line));
+  if (p.last && p.last.status !== 'success' && p.last.error && !p.running) g.appendChild(el('span', p.last.error, 'err'));
+  li.appendChild(g);
+  const b = el('button', '▶', 'btn play'); b.disabled = p.running; b.title = 'Back up now'; b.setAttribute('aria-label', 'Back up ' + p.name + ' now');
+  b.addEventListener('click', async () => { b.disabled = true; try { await api('/api/run/' + encodeURIComponent(p.name), 'POST'); } catch (e) {} load(); });
+  li.appendChild(b);
+  return li;
+}
+function historyRow(r) {
+  const li = el('li');
+  li.appendChild(el('span', '', 'dot ' + r.status));
+  const g = el('div', '', 'grow'); g.appendChild(el('b', r.profile));
+  g.appendChild(el('span', (r.status === 'success' ? 'Succeeded' : r.status === 'timeout' ? 'Timed out' : 'Failed') + ' · ' + ago(r.end) + ' · ' + r.trigger));
+  if (r.error) g.appendChild(el('span', r.error, 'err'));
+  li.appendChild(g);
+  return li;
+}
+function fill(ul, rows, emptyText) {
+  ul.replaceChildren();
+  if (!rows.length) { const li = el('li', emptyText, 'empty'); ul.appendChild(li); return; }
+  rows.forEach(r => ul.appendChild(r));
 }
 
 async function load() {
   try {
     const sum = await (await fetch('/api/summary')).json();
-    $('overall').className = 'pill ' + sum.overall; $('overall').textContent = sum.overall;
-    if (!token) return showLogin();
+    if (!token) { setHero(sum.overall, sum.summary); return signOut(); }
     const s = await api('/api/status'), h = await api('/api/history');
     $('login').hidden = true; $('app').hidden = false;
-    $('summary').textContent = s.summary;
-    $('meta').textContent = s.os + ' · client: ' + (s.client || 'not found') + ' · up ' + s.uptime +
-      (s.server ? ' · server ' + (s.server.up ? 'up' : 'DOWN') + ' (' + s.server.url + ')' : '');
-    const fl = $('findings'); fl.replaceChildren();
-    (s.findings || []).forEach(f => fl.appendChild(el('li', f.level + ': ' + f.msg, f.level)));
-    (s.skippedProfiles || []).forEach(k => fl.appendChild(el('li', 'skipped ' + k.path + ': ' + k.reason, 'WARN')));
-
-    const pt = $('profiles'); pt.replaceChildren();
-    row(pt, ['Profile', 'Last run', 'Result', ''], true);
-    s.profiles.forEach(p => {
-      const btn = el('button', 'Run'); btn.disabled = p.running;
-      btn.addEventListener('click', async () => { await api('/api/run/' + encodeURIComponent(p.name), 'POST'); load(); });
-      row(pt, [p.name + (p.scheduled ? '' : ' (manual)'), p.last ? fmt(p.last.end) : 'never',
-        p.running ? pill('running') : p.last ? pill(p.last.status) : '', btn]);
-    });
-    const ht = $('history'); ht.replaceChildren();
-    row(ht, ['Profile', 'Started', 'Trigger', 'Result', 'Detail'], true);
-    h.forEach(r => row(ht, [r.profile, fmt(r.start), r.trigger, pill(r.status), r.error || '']));
+    const finished = s.profiles.map(p => p.last && p.last.end).filter(valid).sort().pop();
+    const parts = [];
+    if (s.overall === 'ok' || s.overall === 'running') parts.push(finished ? 'Last backup ' + ago(finished) : 'No backups yet');
+    else parts.push(s.summary);
+    if (s.server) parts.push(s.server.up ? 'Server online' : 'Server unreachable');
+    setHero(s.overall, s.summary, parts.join(' · '));
+    const nl = $('notices'); nl.replaceChildren();
+    (s.findings || []).forEach(f => nl.appendChild(el('li', f.msg, f.level)));
+    (s.skippedProfiles || []).forEach(k => nl.appendChild(el('li', 'Skipped ' + k.path + ': ' + k.reason, 'WARN')));
+    fill($('profiles'), s.profiles.map(profileRow), 'No Syncrify profiles found');
+    fill($('history'), h.slice(0, 10).map(historyRow), 'No activity yet');
+    $('meta').textContent = s.os + ' · up ' + s.uptime;
   } catch (e) {
-    if (e.message === 'auth') { token = null; try { sessionStorage.removeItem('syncamp-token'); } catch (x) {} showLogin('Token rejected'); }
-    else $('summary').textContent = 'Cannot reach SyncAmp service';
+    if (e.message === 'auth') signOut('Token rejected');
+    else setHero('unknown', '', 'Cannot reach the SyncAmp service');
   }
 }
 $('signin').addEventListener('click', () => {
@@ -67,7 +99,8 @@ $('signin').addEventListener('click', () => {
   try { sessionStorage.setItem('syncamp-token', token); } catch (e) {}
   load();
 });
-$('signout').addEventListener('click', () => { token = null; try { sessionStorage.removeItem('syncamp-token'); } catch (e) {} load(); });
+$('token').addEventListener('keydown', e => { if (e.key === 'Enter') $('signin').click(); });
+$('signout').addEventListener('click', () => { signOut(); load(); });
 $('runall').addEventListener('click', async () => { await api('/api/run', 'POST'); load(); });
 $('reload').addEventListener('click', async () => { await api('/api/reload', 'POST'); load(); });
 load(); setInterval(load, 5000);

@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"runtime"
 	"time"
 
 	"github.com/kardianos/service"
@@ -133,7 +134,7 @@ func run() int {
 		Name: "SyncAmp", DisplayName: "SyncAmp Backup Supervisor",
 		Description: "Schedules, monitors and verifies Syncrify backups.",
 		Arguments:   []string{"-config", *cfgPath, "run"},
-		Option:      service.KeyValue{"SystemdScript": hardenedUnit},
+		Option:      service.KeyValue{"SystemdScript": hardenedUnit, "UserService": runtime.GOOS == "darwin" && os.Geteuid() != 0},
 	}
 	svc, err := service.New(&program{cfgPath: *cfgPath}, svcCfg)
 	if err != nil {

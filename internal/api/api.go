@@ -21,6 +21,8 @@ import (
 
 	"github.com/brielshallouf/syncamp/internal/auth"
 	"github.com/brielshallouf/syncamp/internal/core"
+	"github.com/brielshallouf/syncamp/internal/profiles"
+	"github.com/brielshallouf/syncamp/internal/store"
 )
 
 //go:embed web
@@ -60,9 +62,18 @@ func Handler(e *core.Engine, token string) http.Handler {
 		writeJSON(w, 200, map[string]string{"overall": st.Overall, "summary": st.Summary})
 	})
 	mux.HandleFunc("GET /api/status", protected(func(w http.ResponseWriter, r *http.Request) { writeJSON(w, 200, e.Status()) }))
-	mux.HandleFunc("GET /api/profiles", protected(func(w http.ResponseWriter, r *http.Request) { writeJSON(w, 200, e.Profiles()) }))
+	mux.HandleFunc("GET /api/profiles", protected(func(w http.ResponseWriter, r *http.Request) {
+		ps := e.Profiles()
+		if ps == nil {
+			ps = []profiles.Profile{}
+		}
+		writeJSON(w, 200, ps)
+	}))
 	mux.HandleFunc("GET /api/history", protected(func(w http.ResponseWriter, r *http.Request) {
 		h := e.History()
+		if h == nil {
+			h = []store.Run{}
+		}
 		for i, j := 0, len(h)-1; i < j; i, j = i+1, j-1 { // newest first
 			h[i], h[j] = h[j], h[i]
 		}

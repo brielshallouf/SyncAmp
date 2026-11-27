@@ -22,6 +22,9 @@ credentials. This document states what it defends against, how, and what it does
 - Startup repairs loose permissions on config, token, history and log.
 - `syncamp doctor` audits all of the above and is safe to run from monitoring (exit 0/1/2).
 
+## macOS
+The service is a **per-user LaunchAgent**, not a root daemon: nothing runs with elevated rights, there is no privilege-escalation path through profiles, and the API token (`0600`, in your Application Support folder) is readable only by you. The menu-bar app reads that token directly. Grant Full Disk Access to the `syncamp` binary (System Settings → Privacy & Security) if you back up protected folders. The "client is user-writable" check is skipped for non-root services (it would false-positive on `/Applications`, which is `root:admin 775`, and a per-user service gains nothing from it).
+
 ## Windows profile folders (read this)
 Windows cannot drop privileges per profile the way the Linux build does. Syncrify stores profiles in the *interactive user's* `%USERPROFILE%\.syncrify`, while a LocalSystem service's own home is elsewhere. Pick one:
 

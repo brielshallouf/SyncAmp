@@ -1,3 +1,5 @@
+//go:build !darwin
+
 // Command syncamp-tray shows the SyncAmp status icon for the logged-in user.
 // It is a separate binary so the privileged service links no GUI code.
 // Headless servers don't need it: everything is available via `syncamp`.

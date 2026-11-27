@@ -23,6 +23,8 @@ dist: test
 	CGO_ENABLED=0 GOOS=linux   GOARCH=arm64 go build $(GOFLAGS_REL) -ldflags "$(LDFLAGS)" -o dist/syncamp-linux-arm64 ./cmd/syncamp
 	CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build $(GOFLAGS_REL) -ldflags "$(LDFLAGS)" -o dist/syncamp-windows-amd64.exe ./cmd/syncamp
 	CGO_ENABLED=0 GOOS=windows GOARCH=arm64 go build $(GOFLAGS_REL) -ldflags "$(LDFLAGS)" -o dist/syncamp-windows-arm64.exe ./cmd/syncamp
+	CGO_ENABLED=0 GOOS=darwin  GOARCH=arm64 go build $(GOFLAGS_REL) -ldflags "$(LDFLAGS)" -o dist/syncamp-darwin-arm64 ./cmd/syncamp
+	CGO_ENABLED=0 GOOS=darwin  GOARCH=amd64 go build $(GOFLAGS_REL) -ldflags "$(LDFLAGS)" -o dist/syncamp-darwin-amd64 ./cmd/syncamp
 	CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build $(GOFLAGS_REL) -ldflags "$(LDFLAGS) -H=windowsgui" -o dist/syncamp-tray-windows-amd64.exe ./cmd/syncamp-tray
 	CGO_ENABLED=0 GOOS=linux   GOARCH=amd64 go build $(GOFLAGS_REL) -ldflags "$(LDFLAGS)" -o dist/syncamp-tray-linux-amd64 ./cmd/syncamp-tray
 	cd dist && sha256sum syncamp-* > SHA256SUMS

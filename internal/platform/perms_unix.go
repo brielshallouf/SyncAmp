@@ -46,8 +46,13 @@ func IsRoot() bool { return os.Geteuid() == 0 }
 
 // UntrustedWritable reports whether path (or its parent dir) can be modified
 // by someone other than its owner/root: such an executable would hand
-// root to any user who can write it.
+// root to any user who can write it. It only applies when we run as root; a
+// per-user service gains nothing from replacing a binary the user can already
+// run (and on macOS /Applications is root:admin 775, which would false-positive).
 func UntrustedWritable(path string) (bool, string) {
+	if !IsRoot() {
+		return false, ""
+	}
 	for _, p := range []string{path, parentOf(path)} {
 		st, err := os.Stat(p)
 		if err != nil {

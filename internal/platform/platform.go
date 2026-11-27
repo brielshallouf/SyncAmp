@@ -27,6 +27,14 @@ func DataDir() string {
 		}
 		return filepath.Join(base, "SyncAmp")
 	}
+	if runtime.GOOS == "darwin" {
+		// Per-user LaunchAgent: the menu-bar app (same user) can read the token.
+		if os.Geteuid() == 0 {
+			return "/Library/Application Support/SyncAmp"
+		}
+		home, _ := os.UserHomeDir()
+		return filepath.Join(home, "Library", "Application Support", "SyncAmp")
+	}
 	if os.Geteuid() == 0 {
 		return "/var/lib/syncamp"
 	}
@@ -78,6 +86,13 @@ func ClientCandidates() []string {
 			}
 		}
 		return out
+	}
+	if runtime.GOOS == "darwin" {
+		// Best guesses: Syncrify's macOS install layout is not documented; set clientPath if not found.
+		return []string{
+			"/Applications/Syncrify/SyncrifyClient.sh", "/Applications/Syncrify Client/SyncrifyClient.sh",
+			"/usr/local/Syncrify/SyncrifyClient.sh", "/usr/local/bin/SyncrifyClient.sh",
+		}
 	}
 	return []string{
 		"/opt/Syncrify/SyncrifyClient.sh", "/opt/SyncrifyClient/SyncrifyClient.sh",

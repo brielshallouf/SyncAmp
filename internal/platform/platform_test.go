@@ -9,6 +9,9 @@ import (
 )
 
 func TestUntrustedWritable(t *testing.T) {
+	if os.Geteuid() != 0 {
+		t.Skip("check only applies to a root service")
+	}
 	dir := t.TempDir()
 	_ = os.Chmod(dir, 0o755)
 	exe := filepath.Join(dir, "client.sh")

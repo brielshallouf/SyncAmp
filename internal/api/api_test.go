@@ -105,3 +105,23 @@ func TestProfilesEndpointHidesFileContents(t *testing.T) {
 		t.Errorf("profile file contents exposed: %s", body)
 	}
 }
+
+// Clients index straight into these arrays; JSON null would crash them.
+func TestEmptyCollectionsAreArraysNotNull(t *testing.T) {
+	dir := t.TempDir()
+	cfg := filepath.Join(dir, "config.json")
+	_ = os.WriteFile(cfg, []byte(`{"clientPath":"/bin/echo","profileDirs":["`+dir+`/none"],"listenAddr":"127.0.0.1:0"}`), 0o600)
+	e, err := core.New(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	h := Handler(e, tok)
+	for path, want := range map[string]string{"/api/history": "[]", "/api/profiles": "[]"} {
+		if got := strings.TrimSpace(do(h, "GET", path, "127.0.0.1:1", tok).Body.String()); got != want {
+			t.Errorf("%s = %s, want %s", path, got, want)
+		}
+	}
+	if b := do(h, "GET", "/api/status", "127.0.0.1:1", tok).Body.String(); !strings.Contains(b, `"profiles":[]`) {
+		t.Errorf("status.profiles must be []: %s", b)
+	}
+}
