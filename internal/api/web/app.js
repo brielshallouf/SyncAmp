@@ -96,7 +96,7 @@ function profileItem(p) {
   else if (!p.last) line = p.scheduled ? 'Waiting for first run' : 'Manual · never run';
   else line = outcome(p.last.status) + ' ' + ago(p.last.end);
   g.appendChild(el('span', line));
-  if (p.last && p.last.status !== 'success' && p.last.error && !p.running) g.appendChild(el('span', p.last.error, 'err'));
+  if (p.last && p.last.status !== 'success' && p.last.error && !p.running) g.appendChild(el('span', p.last.error, p.last.status === 'warning' ? 'warnmsg' : 'err'));
   row.appendChild(g);
   const b = el('button', '▶', 'play'); b.disabled = p.running; b.title = 'Back up now'; b.setAttribute('aria-label', 'Back up ' + p.name + ' now');
   b.addEventListener('click', async e => { e.stopPropagation(); b.disabled = true; try { await api('/api/run/' + encodeURIComponent(p.name), 'POST'); } catch (x) {} load(); });
@@ -114,7 +114,7 @@ function historyItem(r) {
   row.appendChild(el('span', '', 'dot ' + r.status));
   const g = el('div', '', 'grow'); g.appendChild(el('b', r.profile));
   g.appendChild(el('span', outcome(r.status) + ' · ' + ago(r.end) + ' · ' + r.trigger));
-  if (r.error) g.appendChild(el('span', r.error, 'err'));
+  if (r.error) g.appendChild(el('span', r.error, r.status === 'warning' ? 'warnmsg' : 'err'));
   row.appendChild(g); li.appendChild(row); return li;
 }
 function fill(ul, rows, emptyText) {

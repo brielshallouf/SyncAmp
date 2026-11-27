@@ -1,10 +1,43 @@
 # SyncAmp
 
-A **client-side companion for [Syncrify](https://web.synametrics.com/) backups** on Windows, macOS and Linux: a small background service plus a tray popover (and a headless CLI) that tells you whether this machine's backups are actually healthy, lets you run them on demand, and alerts you when one fails or goes **overdue**.
+[![ci](https://github.com/brielshallouf/SyncAmp/actions/workflows/ci.yml/badge.svg)](https://github.com/brielshallouf/SyncAmp/actions/workflows/ci.yml)
+[![release](https://img.shields.io/github/v/release/brielshallouf/SyncAmp?include_prereleases&label=latest%20release)](https://github.com/brielshallouf/SyncAmp/releases)
+
+<p align="center"><img src="docs/images/hero.png" width="720" alt="SyncAmp tray popover: one machine needing attention (left, light) and one fully healthy (right, dark)"></p>
+<p align="center"><sub>The tray popover with demo data: an overdue backup with its alert settings open (left), and everything healthy (right).</sub></p>
+
+A **client-side companion for [Syncrify](https://web.synametrics.com/) backups** on Windows, macOS and Linux: a small background service plus a tray popover (and a headless command line) that tells you whether this machine's backups are actually healthy, lets you run them on demand, and alerts you when one fails or goes **overdue**.
 
 **Scope.** SyncAmp runs on each machine being backed up and watches that machine's Syncrify client. It does not administer a Syncrify *server* (users, quotas, storage, settings): use Syncrify's own web console for that. Its only server feature is a connection check: "can this machine reach the server, and does it answer like Syncrify?".
 
 SyncAmp is independent of Synametrics. It does **not** reimplement the Syncrify protocol; it drives and observes the official client, so you keep Syncrify's delta engine, encryption and server compatibility. What we know about Syncrify (and what we don't) is in [docs/SYNCRIFY-NOTES.md](docs/SYNCRIFY-NOTES.md).
+
+
+## Download
+
+The newest build is always available, with no tagging needed (it is rebuilt on every push):
+
+| OS | Service + command line | Tray / menu-bar app |
+|---|---|---|
+| **Windows** (64-bit) | [`syncamp-windows-amd64.exe`](https://github.com/brielshallouf/SyncAmp/releases/download/nightly/syncamp-windows-amd64.exe) · [ARM64](https://github.com/brielshallouf/SyncAmp/releases/download/nightly/syncamp-windows-arm64.exe) | [`syncamp-tray-windows-amd64.exe`](https://github.com/brielshallouf/SyncAmp/releases/download/nightly/syncamp-tray-windows-amd64.exe) |
+| **macOS** | [Apple Silicon](https://github.com/brielshallouf/SyncAmp/releases/download/nightly/syncamp-darwin-arm64) · [Intel](https://github.com/brielshallouf/SyncAmp/releases/download/nightly/syncamp-darwin-amd64) | [`SyncAmp-macos.zip`](https://github.com/brielshallouf/SyncAmp/releases/download/nightly/SyncAmp-macos.zip) |
+| **Linux** | [x86-64](https://github.com/brielshallouf/SyncAmp/releases/download/nightly/syncamp-linux-amd64) · [ARM64](https://github.com/brielshallouf/SyncAmp/releases/download/nightly/syncamp-linux-arm64) | [x86-64](https://github.com/brielshallouf/SyncAmp/releases/download/nightly/syncamp-tray-linux-amd64) (headless servers don't need it) |
+
+Prefer a numbered version? See [**Releases**](https://github.com/brielshallouf/SyncAmp/releases): once one is published, the same file names are available at `.../releases/latest/download/<file name>`.
+Every release includes `SHA256SUMS` so you can verify a download. The programs are **not code-signed**, so Windows SmartScreen and macOS Gatekeeper will warn on first run ([how to proceed](docs/GETTING-STARTED.md#first-run-warnings)).
+
+## Quick start
+
+```text
+Windows (PowerShell as Administrator)        Linux / macOS
+-------------------------------------        -------------
+.\syncamp.exe install                        sudo syncamp install      # macOS: no sudo
+.\syncamp.exe doctor                         syncamp doctor
+.\syncamp.exe start                          sudo syncamp start        # macOS: no sudo
+.\syncamp.exe status                         syncamp status
+```
+
+`doctor` tells you anything that needs fixing (for example, where your Syncrify client or profiles are). **[Step-by-step guide for each system, with troubleshooting →](docs/GETTING-STARTED.md)**
 
 ## Two modes
 
@@ -26,7 +59,7 @@ Switch with `syncamp config set mode scheduler`.
 | A failed backup is easy to miss | Real outcome detection: exit code **and** the client's own messages ("…encountered one or more errors", "Unable to connect…"). "Success with errors" is a distinct **warning** |
 | A backup that silently *stopped happening* is invisible | **Overdue alerts**: no successful backup within the window derived from the profile's weekday schedule (longest gap + 12 h), or one you set (`syncamp profile stale NAME 26h`) |
 | Console client may print a failure and exit 0 | Output is checked too; timeouts kill the whole process tree |
-| No alerting | Webhook (Slack/Teams/ntfy-style) on failures, overdue and recovery, and server unreachable/restored (debounced: two failed checks) |
+| No alerting | Webhook (Slack-style JSON; Slack/Mattermost incoming webhooks accept it) on failures, overdue and recovery, and server unreachable/restored (debounced: two failed checks) |
 | Hard to tell if the server is the right one | Connection check calls the server's anonymous build-number operation: shows "Server build N" and warns if the URL answers but isn't Syncrify |
 | Profiles can run scripts as the service account | Hardened discovery: only your own `~/.syncrify` plus folders you list; symlinks refused; Linux runs each backup as the profile's owner (see [SECURITY.md](SECURITY.md)) |
 
@@ -152,7 +185,7 @@ All shipped binaries (Windows/Linux × amd64/arm64) scan clean with `govulncheck
 ## Status / limitations
 
 - **Verified (Linux):** unit tests incl. race detector; end-to-end with a stub client covering CLI, exit codes, token auth, symlink refusal, redaction, privilege drop to the profile owner, refusal of a world-writable client, fail-closed config, startup permission repair; vulnerability scans of all binaries.
-- **macOS: the Swift app has NOT been compiled or run** (no Swift/macOS toolchain in the build sandbox). The Go service cross-compiles for macOS (arm64/amd64) and scans clean, but the LaunchAgent install and Syncrify's macOS install paths are unverified. Run `./build-app.sh` (it runs the Swift unit tests first) and report any compile errors.
+- **macOS:** the Swift app is compiled and its unit tests run on a real macOS runner in CI (it is published as `SyncAmp-macos.zip`), but nobody has launched it on a desktop yet, and the LaunchAgent install and Syncrify's macOS install paths are unverified.
 - **Compiles but untested on a real Windows host:** the Windows service path, `icacls` ACL hardening (`internal/platform/perms_windows.go`), the tray (ICO icon, `reg add` autostart), and the console-hiding/`taskkill` process-tree code.
 - **Untested here:** the hardened systemd unit (no systemd in the build sandbox) — run `systemctl status syncamp` after install and report any sandbox denial.
 - **Never run against a live Syncrify client/server.** `failurePatterns`/`warnPatterns` now use the product's own message strings (from the installer you provided), but whether the console client prints them to stdout is unverified, and the profile XML element names beyond `schedulerDays` are still unknown, so SyncAmp still uses `defaultTimes` for time of day. See [docs/SYNCRIFY-NOTES.md](docs/SYNCRIFY-NOTES.md).
