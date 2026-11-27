@@ -31,12 +31,17 @@ Start-Sleep -Seconds 4
 "status exit: $LASTEXITCODE"
 & "$app\syncamp.exe" profiles
 
+Section 'WebView2 runtime'
+Get-ItemProperty 'HKLM:\SOFTWARE\WOW6432Node\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}' -ErrorAction SilentlyContinue | Select-Object pv | Format-List
+
 Section 'the app window: real WebView2 window, live data through the bridge, no sign-in'
 $out = Join-Path $env:RUNNER_TEMP 'selftest.json'
 $a = Start-Process "$app\syncamp-app.exe" -ArgumentList 'selftest', $out -Wait -PassThru
 "selftest exit code: $($a.ExitCode)  (0 ok, 1 timeout, 2 not signed in, 3 window could not start)"
 if (Test-Path $out) { Get-Content $out }
-if ($a.ExitCode -ne 0) { throw "app self-test failed ($($a.ExitCode))" }
+if ($a.ExitCode -ne 0) {
+  "--- app.log:"; Get-Content "$env:LOCALAPPDATA\SyncAmp\app.log" -ErrorAction SilentlyContinue
+  throw "app self-test failed ($($a.ExitCode))" }
 $r = Get-Content $out | ConvertFrom-Json
 if ($r.report.profiles -lt 1) { throw "the window rendered but saw no profiles: $($r.report | ConvertTo-Json -Compress)" }
 if (-not $r.tokenReadable) { throw 'the app account could not read the access key' }

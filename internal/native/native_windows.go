@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -112,6 +113,18 @@ func (p *Popover) loop(ready chan<- error) {
 	runtime.LockOSThread()
 	defer runtime.UnlockOSThread()
 
+	// WebView2 is a COM component and COM is per-thread. The library initialises COM only on the
+	// process's MAIN thread (in its package init), but this window lives on its own thread: without
+	// this call the environment-created callback never arrives and startup hangs forever.
+	switch err := windows.CoInitializeEx(0, windows.COINIT_APARTMENTTHREADED); {
+	case err == nil:
+		defer windows.CoUninitialize()
+	case err == windows.Errno(1): // S_FALSE: this thread was already initialised, which is fine
+		defer windows.CoUninitialize()
+	default:
+		logf("CoInitializeEx failed: %v", err)
+	}
+	logf("creating the window")
 	data := filepath.Join(os.Getenv("LOCALAPPDATA"), "SyncAmp", "WebView2") // not Program Files: not writable
 	_ = os.MkdirAll(data, 0o700)
 	// Created tiny so the unavoidable first-paint flash is a 1-pixel window; it is hidden at once.
@@ -120,10 +133,12 @@ func (p *Popover) loop(ready chan<- error) {
 		WindowOptions: webview2.WindowOptions{Title: "SyncAmp", Width: 1, Height: 1},
 	})
 	if wv == nil {
+		logf("WebView2 could not be created (see the lines above)")
 		ready <- errors.New("the Microsoft WebView2 Runtime is not installed. Install it from https://go.microsoft.com/fwlink/p/?LinkId=2124703 and open SyncAmp again")
 		return
 	}
 	hwnd := uintptr(wv.Window())
+	logf("window created (hwnd %x)", hwnd)
 	frameless(hwnd)
 	_, _, _ = pShowWindow.Call(hwnd, swHide)
 
@@ -232,6 +247,29 @@ func (p *Popover) Toggle() error {
 		return nil
 	}
 	return p.Show()
+}
+
+var logOnce sync.Once
+
+// logf appends to %LOCALAPPDATA%\SyncAmp\app.log. The app has no console, and the WebView2 library
+// reports its errors through the standard logger, so without this a failure would be invisible.
+func logf(format string, a ...any) {
+	dir := filepath.Join(os.Getenv("LOCALAPPDATA"), "SyncAmp")
+	_ = os.MkdirAll(dir, 0o700)
+	path := filepath.Join(dir, "app.log")
+	flags := os.O_CREATE | os.O_APPEND | os.O_WRONLY
+	if st, err := os.Stat(path); err == nil && st.Size() > 256<<10 {
+		flags = os.O_CREATE | os.O_TRUNC | os.O_WRONLY // keep it small
+	}
+	f, err := os.OpenFile(path, flags, 0o600)
+	if err != nil {
+		return
+	}
+	logOnce.Do(func() { log.SetOutput(f) }) // route the library's own messages here as well
+	fmt.Fprintf(f, "%s %s\n", time.Now().Format(time.RFC3339), fmt.Sprintf(format, a...))
+	if log.Writer() != f {
+		f.Close()
+	}
 }
 
 // Notify shows a simple message box (used for errors such as a missing WebView2 runtime).
