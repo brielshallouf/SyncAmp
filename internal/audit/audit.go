@@ -80,8 +80,38 @@ func Check(cfgPath string, cfg config.Config) []Finding {
 			add(Info, "scanAllUserHomes is on: backups run as each profile's owner, not root")
 		}
 	}
-	if cfg.Scheduling != "off" {
-		add(Info, "SyncAmp schedules backups itself. If the Syncrify client service or Task Scheduler/cron/launchd also runs these profiles they will collide (the client locks a profile, so the second run is reported as a warning). Disable one side, or set scheduling to \"off\" to only monitor and run on demand.")
+	if cfg.Mode == "scheduler" {
+		add(Warn, "scheduler mode: SyncAmp starts scheduled backups. Make sure the Syncrify client's own scheduler / Task Scheduler / cron / launchd is disabled for these profiles, or runs will collide (the client locks a profile, so the second run is reported as a warning)")
+	} else {
+		add(Info, "monitor mode (default): the Syncrify client keeps its own schedule; SyncAmp watches, verifies and runs on demand")
+	}
+	if cfg.LogWatch {
+		found := false
+		for _, d := range append(append([]string{}, cfg.ProfileDirs...), cfg.LogDirs...) {
+			if st, err := os.Stat(filepath.Join(d, "logs")); err == nil && st.IsDir() {
+				found = true
+			}
+		}
+		for _, d := range cfg.LogDirs {
+			if st, err := os.Stat(d); err == nil && st.IsDir() {
+				found = true
+			}
+		}
+		if !found {
+			add(Warn, "logWatch is on but no client logs folder was found next to your profiles; set logDirs. (Experimental: the client's log layout is unverified.)")
+		}
+	}
+	known := map[string]bool{}
+	for _, d := range cfg.ProfileDirs {
+		known[filepath.Clean(d)] = true
+	}
+	for _, d := range platform.SharedDataCandidates() {
+		if known[filepath.Clean(d)] {
+			continue
+		}
+		if m, _ := filepath.Glob(filepath.Join(d, "*.syncrify")); len(m) > 0 {
+			add(Info, "found %d profile(s) in %s, which may be the Syncrify client's shared data folder. To include it add it to profileDirs, after confirming only administrators can write there (a profile can run scripts).", len(m), d)
+		}
 	}
 	if len(cfg.FailurePatterns) == 0 {
 		add(Warn, "no failurePatterns: a client that prints an error but exits 0 will be recorded as success")

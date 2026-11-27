@@ -21,7 +21,8 @@ type Run struct {
 	ExitCode int       `json:"exitCode"`
 	Trigger  string    `json:"trigger"` // schedule | manual
 	Error    string    `json:"error,omitempty"`
-	Tail     []string  `json:"tail,omitempty"` // last lines of client output
+	Tail     []string  `json:"tail,omitempty"`   // last lines of client output
+	Source   string    `json:"source,omitempty"` // dedupe key for runs observed in client logs
 }
 
 // Store is a concurrency-safe, size-capped run history.
@@ -82,4 +83,43 @@ func (s *Store) Last(profile string) (Run, bool) {
 		}
 	}
 	return Run{}, false
+}
+
+// LastSuccess returns the most recent run that completed (success, or
+// "success with errors") for a profile.
+func (s *Store) LastSuccess(profile string) (Run, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for i := len(s.runs) - 1; i >= 0; i-- {
+		if r := s.runs[i]; r.Profile == profile && (r.Status == "success" || r.Status == "warning") {
+			return r, true
+		}
+	}
+	return Run{}, false
+}
+
+// HasSource reports whether a run with this dedupe key was already recorded.
+func (s *Store) HasSource(key string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, r := range s.runs {
+		if r.Source == key {
+			return true
+		}
+	}
+	return false
+}
+
+// Near reports whether profile has any recorded run ending within d of t.
+func (s *Store) Near(profile string, t time.Time, d time.Duration) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, r := range s.runs {
+		if r.Profile == profile {
+			if diff := r.End.Sub(t); diff < d && diff > -d {
+				return true
+			}
+		}
+	}
+	return false
 }

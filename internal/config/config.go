@@ -21,6 +21,9 @@ type Override struct {
 	Days     []string `json:"days,omitempty"`     // "sun".."sat"; replaces the profile's schedulerDays
 	Times    []string `json:"times,omitempty"`    // "HH:MM" local time
 	Interval string   `json:"interval,omitempty"` // e.g. "4h"; alternative to days/times
+	// StaleAfter: raise an "overdue" alert if no successful backup is seen within this
+	// long ("auto" or empty = derive from the profile schedule / global default).
+	StaleAfter string `json:"staleAfter,omitempty"`
 }
 
 // Server is the Syncrify server this client backs up to. It is only used for a
@@ -34,15 +37,26 @@ type Server struct {
 // it controls what the privileged service executes, so it is stored 0600 /
 // Administrators-only and validated on every load.
 type Config struct {
-	ListenAddr      string              `json:"listenAddr"`      // must be loopback
-	ClientPath      string              `json:"clientPath"`      // Syncrify client launcher; auto-detected if empty
-	ClientArgs      []string            `json:"clientArgs"`      // {profile} is replaced by the profile path
-	ProfileDirs     []string            `json:"profileDirs"`     // extra dirs holding *.syncrify
-	DefaultTimes    []string            `json:"defaultTimes"`    // used when a profile has days but no time
-	JobTimeout      string              `json:"jobTimeout"`      // per backup, e.g. "12h"
-	FailurePatterns []string            `json:"failurePatterns"` // regexes in client output that mean failure
-	WarnPatterns    []string            `json:"warnPatterns"`    // regexes that mean "finished, but with errors" (not a failure)
-	Scheduling      string              `json:"scheduling"`      // "auto" (SyncAmp starts scheduled backups) or "off" (monitor + manual only)
+	ListenAddr      string   `json:"listenAddr"`      // must be loopback
+	ClientPath      string   `json:"clientPath"`      // Syncrify client launcher; auto-detected if empty
+	ClientArgs      []string `json:"clientArgs"`      // {profile} is replaced by the profile path
+	ProfileDirs     []string `json:"profileDirs"`     // extra dirs holding *.syncrify
+	DefaultTimes    []string `json:"defaultTimes"`    // used when a profile has days but no time
+	JobTimeout      string   `json:"jobTimeout"`      // per backup, e.g. "12h"
+	FailurePatterns []string `json:"failurePatterns"` // regexes in client output that mean failure
+	WarnPatterns    []string `json:"warnPatterns"`    // regexes that mean "finished, but with errors" (not a failure)
+	// Mode: "monitor" (default) - observe, verify and run on demand while the Syncrify
+	// client keeps its own schedule; "scheduler" - SyncAmp also starts scheduled backups
+	// (use only if the client's own scheduler / Task Scheduler / cron are disabled).
+	Mode string `json:"mode"`
+	// StaleAfter is the global "no successful backup within" threshold ("" = derive per
+	// profile from its weekday schedule).
+	StaleAfter string `json:"staleAfter,omitempty"`
+	// LogWatch (experimental, off by default) reads the Syncrify client's HTML logs in
+	// <data folder>/logs to learn about backups SyncAmp did not start itself.
+	LogWatch        bool                `json:"logWatch,omitempty"`
+	LogDirs         []string            `json:"logDirs,omitempty"`         // extra folders to scan for logs
+	SuccessPatterns []string            `json:"successPatterns,omitempty"` // log lines meaning a backup finished OK
 	Webhook         string              `json:"webhook,omitempty"`
 	HistoryLimit    int                 `json:"historyLimit"`
 	Server          Server              `json:"server"`
@@ -83,9 +97,10 @@ func Default() Config {
 			`(?i)unable to lock profile`,
 			`(?i)has locked the current profile`,
 		},
-		Scheduling:   "auto",
-		HistoryLimit: 500,
-		Server:       Server{CheckInterval: "1m"},
+		Mode:            "monitor",
+		SuccessPatterns: []string{`(?i)backup completed in`},
+		HistoryLimit:    500,
+		Server:          Server{CheckInterval: "1m"},
 	}
 }
 
@@ -108,10 +123,13 @@ func (c Config) Validate() error {
 	if c.ClientPath != "" && !filepath.IsAbs(c.ClientPath) {
 		return errors.New("clientPath must be an absolute path (no PATH lookup for privileged execution)")
 	}
-	if c.Scheduling != "" && c.Scheduling != "auto" && c.Scheduling != "off" {
-		return fmt.Errorf("scheduling must be \"auto\" or \"off\", got %q", c.Scheduling)
+	if c.Mode != "" && c.Mode != "monitor" && c.Mode != "scheduler" {
+		return fmt.Errorf("mode must be \"monitor\" or \"scheduler\", got %q", c.Mode)
 	}
-	for _, p := range append(append([]string{}, c.FailurePatterns...), c.WarnPatterns...) {
+	if err := validStale(c.StaleAfter); err != nil {
+		return fmt.Errorf("staleAfter: %w", err)
+	}
+	for _, p := range append(append(append([]string{}, c.FailurePatterns...), c.WarnPatterns...), c.SuccessPatterns...) {
 		if _, err := regexp.Compile(p); err != nil {
 			return fmt.Errorf("pattern %q: %w", p, err)
 		}
@@ -126,6 +144,9 @@ func (c Config) Validate() error {
 			if !hhmm.MatchString(t) {
 				return fmt.Errorf("profiles[%q].times: %q is not HH:MM", n, t)
 			}
+		}
+		if err := validStale(o.StaleAfter); err != nil {
+			return fmt.Errorf("profiles[%q].staleAfter: %w", n, err)
 		}
 		if o.Interval != "" {
 			if d, err := time.ParseDuration(o.Interval); err != nil || d < time.Minute {
@@ -217,4 +238,15 @@ func LoadRaw(path string) (Config, error) {
 	dec := json.NewDecoder(bytesReader(b))
 	dec.DisallowUnknownFields()
 	return c, dec.Decode(&c)
+}
+
+// validStale accepts "", "auto" or a duration of at least one hour.
+func validStale(s string) error {
+	if s == "" || s == "auto" {
+		return nil
+	}
+	if d, err := time.ParseDuration(s); err != nil || d < time.Hour {
+		return fmt.Errorf("%q must be \"auto\" or a duration >= 1h", s)
+	}
+	return nil
 }

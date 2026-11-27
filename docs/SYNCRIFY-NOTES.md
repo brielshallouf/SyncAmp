@@ -65,7 +65,20 @@ Errors: "Unable to connect to the server…", "Authentication failed…", "Unabl
   if the data is sensitive.
 - Default HTTP-only listener (above).
 
-## Ideas this unlocks for SyncAmp (not built yet)
+## How this shaped SyncAmp (built)
+- **Monitor-first** default mode, because the client schedules itself (above).
+- **Overdue detection** from the weekday bitmap (`schedulerDays`, the one profile field we know) using the
+  longest gap between scheduled days + 12 h grace; explicit `staleAfter` overrides.
+- **Server identification**: `GET <server>/app?operation=gbn` (URL shape verified from the admin pages; `gbn` is
+  anonymous per the operation table). The response format is **unknown**; SyncAmp treats a short plain
+  alphanumeric body as the build string and otherwise just reports "reachable, not recognised".
+- **Opt-in log watcher** keyed on log *content*, since logs are HTML under `<data folder>/logs` (verified from a
+  product message) but file names are not known.
+- The product has a **"shared Data Folder"** concept for its background service; its location is unknown.
+  `doctor` hints at likely folders but SyncAmp never trusts them automatically (a shared folder may be
+  user-writable and profiles can run scripts).
+
+## Ideas still open (not built)
 1. **End-to-end verification** via the server's `nri` last-run record, not just local exit codes.
 2. Read the client's own log directory as an additional signal.
 3. Show Syncrify's **next scheduled run** and per-profile last result in the popover.

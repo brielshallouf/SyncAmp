@@ -46,7 +46,9 @@ struct PopoverView: View {
         if s.overall == "ok" || s.overall == "running" {
             parts.append(s.lastBackup.map { "Last backup \(relative($0))" } ?? "No backups yet")
         } else { parts.append(s.summary) }
-        if let srv = s.server { parts.append(srv.up ? "Server reachable" : "Can't reach server") }
+        if let srv = s.server {
+            parts.append(srv.up ? (srv.identified == true && srv.build != nil ? "Server build \(srv.build!)" : "Server reachable") : "Can't reach server")
+        }
         return parts.joined(separator: " · ")
     }
 
@@ -74,7 +76,7 @@ struct PopoverView: View {
     }
 
     private func row(_ p: ProfileStatus) -> some View {
-        let state = p.running ? "running" : (p.paused ? "paused" : (p.last?.status ?? "unknown"))
+        let state = p.running ? "running" : (p.paused ? "paused" : (p.overdue ? "failed" : (p.last?.status ?? "unknown")))
         return HStack(spacing: 10) {
             Circle().fill(p.paused ? Color.clear : Tone.color(state)).frame(width: 9, height: 9)
                 .overlay(Circle().strokeBorder(Color.gray, lineWidth: p.paused ? 1.5 : 0))
@@ -98,6 +100,7 @@ struct PopoverView: View {
     private func caption(_ p: ProfileStatus) -> String {
         if p.running { return "Backing up now…" }
         if p.paused { return "Paused" }
+        if p.overdue { return "Overdue · " + (p.lastSuccess.map { "last success \(relative($0))" } ?? "no success seen yet") }
         guard let l = p.last else { return p.scheduled ? "Waiting for first run" : "Manual · never run" }
         switch l.status {
         case "success": return "Succeeded \(relative(l.end))"

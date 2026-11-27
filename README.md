@@ -1,14 +1,36 @@
 # SyncAmp
 
-A cross-platform (Windows, macOS, Linux) service with a glass-style dashboard and native tray / menu-bar apps that supervises the
-[Syncrify](https://web.synametrics.com/) backup client: scheduling, monitoring,
-failure detection and alerts, with one binary and one config on every OS.
+A **client-side companion for [Syncrify](https://web.synametrics.com/) backups** on Windows, macOS and Linux: a small background service plus a tray popover (and a headless CLI) that tells you whether this machine's backups are actually healthy, lets you run them on demand, and alerts you when one fails or goes **overdue**.
 
-**Scope: this is the *client-side* companion.** It runs on each machine that is being backed up and supervises that machine's Syncrify client. It does not administer a Syncrify *server* (users, quotas, storage, server settings): use Syncrify's own web console for that. The only server-related feature is a connection check, i.e. "can this machine reach the server?".
+**Scope.** SyncAmp runs on each machine being backed up and watches that machine's Syncrify client. It does not administer a Syncrify *server* (users, quotas, storage, settings): use Syncrify's own web console for that. Its only server feature is a connection check: "can this machine reach the server, and does it answer like Syncrify?".
 
-SyncAmp is independent of Synametrics. It does **not** reimplement the Syncrify
-protocol; it drives the official client, so you keep Syncrify's delta engine,
-encryption and server compatibility.
+SyncAmp is independent of Synametrics. It does **not** reimplement the Syncrify protocol; it drives and observes the official client, so you keep Syncrify's delta engine, encryption and server compatibility. What we know about Syncrify (and what we don't) is in [docs/SYNCRIFY-NOTES.md](docs/SYNCRIFY-NOTES.md).
+
+## Two modes
+
+The Syncrify client already schedules its own backups (its background service, or Task Scheduler / cron / launchd). So SyncAmp defaults to **monitor** mode and never starts a scheduled backup behind the client's back.
+
+| | `monitor` (default) | `scheduler` |
+|---|---|---|
+| Who starts scheduled backups | the Syncrify client | SyncAmp |
+| SyncAmp's job | watch, verify, run on demand, alert | all of that, plus replace Task Scheduler / cron |
+| Use when | you use the client normally | you have **disabled** the client's own schedule (otherwise runs collide; the client locks the profile, so the second run is reported as a warning) |
+
+Switch with `syncamp config set mode scheduler`.
+
+## What SyncAmp adds
+
+| Stock Syncrify | SyncAmp |
+|---|---|
+| No at-a-glance status | Tray popover (state ring, per-backup rows) + local dashboard + `syncamp status` with monitoring-friendly exit codes |
+| A failed backup is easy to miss | Real outcome detection: exit code **and** the client's own messages ("…encountered one or more errors", "Unable to connect…"). "Success with errors" is a distinct **warning** |
+| A backup that silently *stopped happening* is invisible | **Overdue alerts**: no successful backup within the window derived from the profile's weekday schedule (longest gap + 12 h), or one you set (`syncamp profile stale NAME 26h`) |
+| Console client may print a failure and exit 0 | Output is checked too; timeouts kill the whole process tree |
+| No alerting | Webhook (Slack/Teams/ntfy-style) on failures, overdue and recovery, and server unreachable/restored (debounced: two failed checks) |
+| Hard to tell if the server is the right one | Connection check calls the server's anonymous build-number operation: shows "Server build N" and warns if the URL answers but isn't Syncrify |
+| Profiles can run scripts as the service account | Hardened discovery: only your own `~/.syncrify` plus folders you list; symlinks refused; Linux runs each backup as the profile's owner (see [SECURITY.md](SECURITY.md)) |
+
+**Where the signals come from.** SyncAmp always knows about backups it started (run on demand, or scheduled in `scheduler` mode). For backups the client ran by itself it can optionally read the client's own HTML logs (`"logWatch": true`, **experimental**: log layout is unverified, so it is off by default and only attributes a log to a profile when the profile's name is in the file name). With no signal, SyncAmp shows "not seen yet" and never raises an overdue alarm it can't justify.
 
 ## How Syncrify backup works (what SyncAmp builds on)
 
@@ -98,15 +120,18 @@ The app is SwiftUI with **zero third-party dependencies**: `glassEffect` on macO
   "defaultTimes": ["02:00"],
   "webhook": "https://hooks.example.com/...",
   "server": { "url": "https://backup.lan:5800", "checkInterval": "1m" },
+  "mode": "monitor",
+  "staleAfter": "auto",
+  "logWatch": false,
   "profiles": {
-    "Documents": { "days": ["mon","wed","fri"], "times": ["12:30","22:00"] },
-    "Photos":    { "interval": "6h" },
+    "Documents": { "staleAfter": "26h" },
+    "Photos":    { "staleAfter": "auto" },
     "Scratch":   { "enabled": false }
   }
 }
 ```
 
-`clientPath` is auto-detected in standard install locations (never via `PATH`). `clientArgs` defaults to `["-console","{profile}"]`; if your launcher takes just the profile, use `["{profile}"]`. By default only the service account's own `~/.syncrify` is scanned — see **Windows profile folders** in [SECURITY.md](SECURITY.md) before adding other users' folders.
+`mode`, `staleAfter`, per-profile `staleAfter`, `logWatch` and `logDirs` are described above; schedule overrides (`days`, `times`, `interval`) only apply in `scheduler` mode. `clientPath` is auto-detected in standard install locations (never via `PATH`). `clientArgs` defaults to `["-console","{profile}"]`; if your launcher takes just the profile, use `["{profile}"]`. By default only the service account's own `~/.syncrify` is scanned — see **Windows profile folders** in [SECURITY.md](SECURITY.md) before adding other users' folders.
 
 ## Security
 
@@ -131,6 +156,6 @@ All shipped binaries (Windows/Linux × amd64/arm64) scan clean with `govulncheck
 - **Compiles but untested on a real Windows host:** the Windows service path, `icacls` ACL hardening (`internal/platform/perms_windows.go`), the tray (ICO icon, `reg add` autostart), and the console-hiding/`taskkill` process-tree code.
 - **Untested here:** the hardened systemd unit (no systemd in the build sandbox) — run `systemctl status syncamp` after install and report any sandbox denial.
 - **Never run against a live Syncrify client/server.** `failurePatterns`/`warnPatterns` now use the product's own message strings (from the installer you provided), but whether the console client prints them to stdout is unverified, and the profile XML element names beyond `schedulerDays` are still unknown, so SyncAmp still uses `defaultTimes` for time of day. See [docs/SYNCRIFY-NOTES.md](docs/SYNCRIFY-NOTES.md).
-- **Schedule collisions:** the Syncrify client service schedules profiles itself. Use `"scheduling": "off"` (or disable one side) so backups are not started twice.
+- **Overdue/observed signals are new and lightly validated:** the freshness logic is unit-tested, and log-watching is tested against the product's own message strings with synthetic logs, but neither has seen a real client log. If your Syncrify client already runs its own schedule, leave SyncAmp in `monitor` mode.
 - Slots missed while the service was *stopped* are not replayed (only sleep/late ticks are).
 - Not implemented: MSI installer, code signing, restore verification. Out of scope by design: Syncrify server administration.

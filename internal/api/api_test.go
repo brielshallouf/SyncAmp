@@ -202,3 +202,38 @@ func TestScheduleEndpoint(t *testing.T) {
 		t.Error("unknown profile leaked into config")
 	}
 }
+
+func TestStaleAfterEndpoint(t *testing.T) {
+	e := newEngine(t)
+	h := Handler(e, tok)
+	const path = "/api/profiles/Docs/schedule"
+	setting := func() string {
+		var st struct {
+			Profiles []struct{ Name, StaleSetting string }
+		}
+		_ = json.Unmarshal(do(h, "GET", "/api/status", "127.0.0.1:5801", tok).Body.Bytes(), &st)
+		for _, p := range st.Profiles {
+			if p.Name == "Docs" {
+				return p.StaleSetting
+			}
+		}
+		return "?"
+	}
+	if c := post(h, path, `{"staleAfter":"24h"}`, tok).Code; c != 200 || setting() != "24h" {
+		t.Errorf("set 24h: %d %q", c, setting())
+	}
+	for _, bad := range []string{`{"staleAfter":"5m"}`, `{"staleAfter":"soon"}`, `{"staleAfter":"-3h"}`} {
+		if c := post(h, path, bad, tok).Code; c != 400 {
+			t.Errorf("%s: got %d want 400", bad, c)
+		}
+	}
+	if setting() != "24h" {
+		t.Error("a rejected update must not change the saved value")
+	}
+	if c := post(h, path, `{"staleAfter":"auto"}`, tok).Code; c != 200 || setting() != "auto" {
+		t.Errorf("reset: %d %q", c, setting())
+	}
+	if c := post(h, path, `{"staleAfter":"24h"}`, "").Code; c != 401 {
+		t.Errorf("needs token: %d", c)
+	}
+}

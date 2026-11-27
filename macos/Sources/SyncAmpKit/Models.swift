@@ -15,6 +15,8 @@ public struct SkippedProfile: Decodable, Sendable, Hashable {
 public struct ServerHealth: Decodable, Sendable {
     public let url: String
     public let up: Bool
+    public let identified: Bool?
+    public let build: String?
     public let error: String?
 }
 
@@ -42,8 +44,23 @@ public struct ProfileStatus: Decodable, Sendable, Identifiable {
     public let running: Bool
     public let scheduled: Bool
     public let paused: Bool
+    public let overdue: Bool
+    public let lastSuccess: Date?
     public let last: Run?
     public var id: String { name }
+
+    enum CodingKeys: String, CodingKey { case name, running, scheduled, paused, overdue, lastSuccess, last }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        name = try c.decode(String.self, forKey: .name)
+        running = try c.decode(Bool.self, forKey: .running)
+        scheduled = try c.decode(Bool.self, forKey: .scheduled)
+        paused = try c.decodeIfPresent(Bool.self, forKey: .paused) ?? false
+        overdue = try c.decodeIfPresent(Bool.self, forKey: .overdue) ?? false
+        lastSuccess = GoTime.parse(try c.decodeIfPresent(String.self, forKey: .lastSuccess))
+        last = try c.decodeIfPresent(Run.self, forKey: .last)
+    }
 }
 
 public struct Status: Decodable, Sendable {

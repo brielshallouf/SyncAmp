@@ -49,7 +49,8 @@ Configure
   init                     write a default config
   config show|validate|set KEY VALUE
   profile enable|disable|reset NAME
-  profile schedule NAME [-days mon,wed] [-times 02:00] [-interval 6h]
+  profile stale NAME auto|26h   alert when no successful backup within that long
+  profile schedule NAME [-days mon,wed] [-times 02:00] [-interval 6h]   (scheduler mode)
 
   version
 `

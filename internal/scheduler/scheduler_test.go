@@ -70,3 +70,26 @@ func TestDescribe(t *testing.T) {
 		}
 	}
 }
+
+func TestMaxGap(t *testing.T) {
+	W := func(d ...time.Weekday) []time.Weekday { return d }
+	cases := []struct {
+		name string
+		days []time.Weekday
+		want time.Duration
+	}{
+		{"none", nil, 0},
+		{"daily", W(0, 1, 2, 3, 4, 5, 6), 24 * time.Hour},
+		{"weekdays only (Fri->Mon is 3d)", W(1, 2, 3, 4, 5), 3 * 24 * time.Hour},
+		{"Sun+Tue+Thu (docs example, Thu->Sun is 3d)", W(0, 2, 4), 3 * 24 * time.Hour},
+		{"Mon+Thu (Thu->Mon is 4d)", W(1, 4), 4 * 24 * time.Hour},
+		{"weekly", W(3), 7 * 24 * time.Hour},
+		{"duplicates ignored", W(2, 2, 2), 7 * 24 * time.Hour},
+		{"wraps Sat->Sun", W(0, 6), 6 * 24 * time.Hour},
+	}
+	for _, c := range cases {
+		if got := MaxGap(c.days); got != c.want {
+			t.Errorf("%s: got %v want %v", c.name, got, c.want)
+		}
+	}
+}

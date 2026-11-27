@@ -285,7 +285,7 @@ func cmdConfig(cfgPath string, args []string) int {
 		fmt.Println("config is valid")
 	case "set":
 		if len(args) != 3 {
-			fmt.Fprintln(os.Stderr, "usage: syncamp config set KEY VALUE\nkeys: webhook, server.url, server.checkInterval, clientPath, jobTimeout, scheduling (auto|off), defaultTimes (comma separated)")
+			fmt.Fprintln(os.Stderr, "usage: syncamp config set KEY VALUE\nkeys: webhook, server.url, server.checkInterval, clientPath, jobTimeout, mode (monitor|scheduler), staleAfter (auto|DURATION), logWatch (on|off), defaultTimes (comma separated)")
 			return 2
 		}
 		cfg, err := config.LoadRaw(cfgPath)
@@ -305,8 +305,12 @@ func cmdConfig(cfgPath string, args []string) int {
 			cfg.ClientPath = v
 		case "jobTimeout":
 			cfg.JobTimeout = v
-		case "scheduling":
-			cfg.Scheduling = v
+		case "mode":
+			cfg.Mode = v
+		case "staleAfter":
+			cfg.StaleAfter = v
+		case "logWatch":
+			cfg.LogWatch = v == "on" || v == "true"
 		case "defaultTimes":
 			cfg.DefaultTimes = splitList(v)
 		default:
@@ -324,7 +328,7 @@ func cmdConfig(cfgPath string, args []string) int {
 // cmdProfile: enable|disable NAME  |  schedule NAME [-days a,b] [-times HH:MM,..] [-interval 6h] | reset NAME
 func cmdProfile(cfgPath string, args []string) int {
 	if len(args) < 2 {
-		fmt.Fprintln(os.Stderr, "usage: syncamp profile enable|disable|reset NAME\n       syncamp profile schedule NAME [-days mon,wed] [-times 02:00,14:30] [-interval 6h]")
+		fmt.Fprintln(os.Stderr, "usage: syncamp profile enable|disable|reset NAME\n       syncamp profile stale NAME auto|26h\n       syncamp profile schedule NAME [-days mon,wed] [-times 02:00,14:30] [-interval 6h]")
 		return 2
 	}
 	sub, name := args[0], args[1]
@@ -347,6 +351,16 @@ func cmdProfile(cfgPath string, args []string) int {
 	case "reset":
 		delete(cfg.Profiles, name)
 		return saveAndReload(cfgPath, cfg)
+	case "stale":
+		if len(args) != 3 {
+			fmt.Fprintln(os.Stderr, "usage: syncamp profile stale NAME auto|DURATION   (alert if no successful backup within DURATION, e.g. 26h)")
+			return 2
+		}
+		if args[2] == "auto" {
+			ov.StaleAfter = ""
+		} else {
+			ov.StaleAfter = args[2]
+		}
 	case "schedule":
 		fs := flag.NewFlagSet("schedule", flag.ExitOnError)
 		days := fs.String("days", "", "comma-separated weekdays, e.g. mon,wed,fri")

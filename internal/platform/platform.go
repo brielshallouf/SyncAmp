@@ -153,3 +153,22 @@ func OpenPanel(url string) error {
 	}
 	return OpenBrowser(url)
 }
+
+// SharedDataCandidates are GUESSES at where the Syncrify client keeps its "shared
+// Data Folder" (the product has a "Switch to shared Data Folder" menu for its
+// background service, but its location is not documented in what we inspected).
+// They are only used for hints in `doctor`, never scanned automatically: a
+// shared folder may be writable by other users.
+func SharedDataCandidates() []string {
+	switch runtime.GOOS {
+	case "windows":
+		pd := os.Getenv("ProgramData")
+		if pd == "" {
+			pd = `C:\ProgramData`
+		}
+		return []string{filepath.Join(pd, "Syncrify"), filepath.Join(pd, "SyncrifyClient"), filepath.Join(pd, "Syncrify Client")}
+	case "darwin":
+		return []string{"/Users/Shared/Syncrify", "/Library/Application Support/Syncrify"}
+	}
+	return []string{"/var/lib/syncrify", "/usr/share/syncrify", "/opt/syncrify/data"}
+}

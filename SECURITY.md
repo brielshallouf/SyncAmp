@@ -16,6 +16,9 @@ credentials. This document states what it defends against, how, and what it does
 | Network attacker | Sniff backup traffic / webhook | Webhooks must be `https://` (explicit opt-out `allowInsecureWebhook`). `doctor` warns on a plain-`http` `server.url`. (Syncrify's own transport/encryption is the client's responsibility.) |
 | Disk-fill / resource abuse | DoS | Size-rotated log, capped history (count and per-run size), HTTP server timeouts and body/header limits, per-run timeout that kills the whole process tree. |
 
+## Monitor mode is also the safer default
+Because SyncAmp no longer starts backups by itself unless you opt into `scheduler` mode, it cannot double-run a profile or be tricked into running one on a schedule it did not create. Log watching treats the (possibly user-writable) logs folder as hostile: regular files only, size-capped, outcomes keyed on content, credentials redacted, and it never executes anything it reads.
+
 ## Hardening in the box
 - Service and CLI binary contain **no GUI code**; the tray is a separate unprivileged binary. Smaller dependency surface (D-Bus only in the tray).
 - Linux unit: `NoNewPrivileges`, `ProtectSystem=full`, `PrivateTmp`, kernel/cgroup/clock protections, `RestrictSUIDSGID`, `RestrictNamespaces`, `RestrictAddressFamilies`, `UMask=0077`. Deliberately *not* set: `ProtectHome` and a capability bound (backups need home access; root needs `CAP_DAC_READ_SEARCH`/`CAP_SETUID`) and `MemoryDenyWriteExecute` (Java JIT).

@@ -14,6 +14,7 @@ import (
 
 	"github.com/brielshallouf/syncamp/internal/audit"
 	"github.com/brielshallouf/syncamp/internal/config"
+	"github.com/brielshallouf/syncamp/internal/logwatch"
 	"github.com/brielshallouf/syncamp/internal/monitor"
 	"github.com/brielshallouf/syncamp/internal/notify"
 	"github.com/brielshallouf/syncamp/internal/platform"
@@ -78,16 +79,18 @@ func (e *Engine) Reload() {
 // Start launches background loops; they stop when ctx is cancelled.
 func (e *Engine) Start(ctx context.Context) {
 	e.baseCtx = ctx
-	e.wg.Add(2)
+	e.wg.Add(4)
 	go func() { defer e.wg.Done(); e.scheduleLoop(ctx) }()
 	go func() { defer e.wg.Done(); e.monitorLoop(ctx) }()
+	go func() { defer e.wg.Done(); e.freshnessLoop(ctx) }()
+	go func() { defer e.wg.Done(); e.logLoop(ctx) }()
 }
 
 // Wait blocks until background loops and in-flight backups finish.
 func (e *Engine) Wait() { e.wg.Wait() }
 
 func (e *Engine) scheduleLoop(ctx context.Context) {
-	prev := time.Now()
+	prev, lastScan := time.Now(), time.Now()
 	t := time.NewTicker(15 * time.Second)
 	defer t.Stop()
 	for {
@@ -95,13 +98,14 @@ func (e *Engine) scheduleLoop(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case now := <-t.C:
-			if now.Sub(prev) > time.Minute {
-				e.Reload() // also covers resume-from-sleep
+			if now.Sub(prev) > time.Minute || now.Sub(lastScan) > 2*time.Minute {
+				e.Reload() // also covers resume-from-sleep; picks up profiles made in the Syncrify GUI
+				lastScan = now
 			}
 			e.mu.RLock()
 			profs := append([]profiles.Profile(nil), e.profs...)
 			e.mu.RUnlock()
-			if e.Config().Scheduling == "off" {
+			if e.Config().Mode != "scheduler" { // monitor mode: the Syncrify client owns the schedule
 				prev = now
 				continue
 			}
@@ -230,7 +234,23 @@ func (e *Engine) RunAll(trigger string) int {
 	return n
 }
 
+// failuresToDown is how many consecutive failed checks flip the server to "down".
+// One blip (network change, server restart, boot-time race) must not raise an alarm.
+const failuresToDown = 2
+
+// debounce decides whether a check result should be reported. A failure is only
+// reported once it has repeated failuresToDown times in a row; a success is
+// reported immediately. It returns the new failure streak and whether to report.
+func debounce(streak int, h monitor.Health) (newStreak int, report bool) {
+	if h.Up {
+		return 0, true
+	}
+	streak++
+	return streak, streak >= failuresToDown
+}
+
 func (e *Engine) monitorLoop(ctx context.Context) {
+	streak := 0
 	for {
 		e.mu.RLock()
 		url, iv := e.cfg.Server.URL, config.Dur(e.cfg.Server.CheckInterval, time.Minute)
@@ -238,18 +258,25 @@ func (e *Engine) monitorLoop(ctx context.Context) {
 		e.mu.RUnlock()
 		if url != "" {
 			h := monitor.Check(ctx, url)
-			e.mu.Lock()
-			e.health = &h
-			changed := e.wasUp != nil && *e.wasUp != h.Up
-			up := h.Up
-			e.wasUp = &up
-			e.mu.Unlock()
-			if changed {
-				msg := "Connection to the Syncrify server is restored"
-				if !h.Up {
-					msg = "Can't reach the Syncrify server: " + h.Error
+			var report bool
+			streak, report = debounce(streak, h)
+			if report {
+				e.mu.Lock()
+				e.health = &h
+				changed := e.wasUp != nil && *e.wasUp != h.Up
+				up := h.Up
+				e.wasUp = &up
+				e.mu.Unlock()
+				if changed {
+					msg := "Connection to the Syncrify server is restored"
+					if !h.Up {
+						msg = "Can't reach the Syncrify server: " + h.Error
+					}
+					_ = notify.Send(ctx, webhook, msg)
 				}
-				_ = notify.Send(ctx, webhook, msg)
+			}
+			if streak > 0 && iv > 15*time.Second {
+				iv = 15 * time.Second // re-check quickly while a failure is unconfirmed
 			}
 		}
 		select {
@@ -272,20 +299,25 @@ func (e *Engine) History() []store.Run { return e.hist.All() }
 
 // ProfileStatus is the per-profile view for the UI.
 type ProfileStatus struct {
-	Name      string     `json:"name"`
-	Path      string     `json:"path"`
-	Running   bool       `json:"running"`
-	Scheduled bool       `json:"scheduled"`
-	Paused    bool       `json:"paused"`   // explicitly disabled in config
-	Schedule  string     `json:"schedule"` // human summary, e.g. "Every 6h"
-	Preset    string     `json:"preset"`   // hourly | every6h | daily | profile (profile's own / custom)
-	Last      *store.Run `json:"last,omitempty"`
+	Name         string     `json:"name"`
+	Path         string     `json:"path"`
+	Running      bool       `json:"running"`
+	Scheduled    bool       `json:"scheduled"`
+	Paused       bool       `json:"paused"`                // explicitly disabled in config
+	Schedule     string     `json:"schedule"`              // human summary, e.g. "Every 6h"
+	Preset       string     `json:"preset"`                // hourly | every6h | daily | profile (profile's own / custom)
+	LastSuccess  *time.Time `json:"lastSuccess,omitempty"` // last completed backup seen (run by us or read from client logs)
+	Overdue      bool       `json:"overdue"`               // no success within the expected window
+	StaleAfter   string     `json:"staleAfter,omitempty"`  // effective threshold, e.g. "36h" (empty = no expectation known)
+	StaleSetting string     `json:"staleSetting"`          // "auto" or the explicit value, for the UI
+	Last         *store.Run `json:"last,omitempty"`
 }
 
 // Status is the whole-system summary.
 type Status struct {
 	Overall  string             `json:"overall"` // ok | warn | error | running | idle
 	Summary  string             `json:"summary"`
+	Mode     string             `json:"mode"` // monitor | scheduler
 	OS       string             `json:"os"`
 	Client   string             `json:"client"`
 	ClientOK bool               `json:"clientFound"`
@@ -302,7 +334,7 @@ func (e *Engine) Status() Status {
 	profs := e.Profiles()
 	e.mu.RLock()
 	defer e.mu.RUnlock()
-	st := Status{OS: platform.OSName(), Client: e.cfg.ClientPath, ClientOK: e.cfg.ClientPath != "",
+	st := Status{Mode: e.cfg.Mode, OS: platform.OSName(), Client: e.cfg.ClientPath, ClientOK: e.cfg.ClientPath != "",
 		Uptime: time.Since(e.started).Round(time.Second).String(), Server: e.health}
 	st.Skipped = e.skipped
 	for _, f := range audit.Check(e.cfgPath, e.cfg) {
@@ -310,8 +342,12 @@ func (e *Engine) Status() Status {
 			st.Findings = append(st.Findings, f)
 		}
 	}
+	if h := e.health; h != nil && h.Up && !h.Identified {
+		st.Findings = append(st.Findings, audit.Finding{Level: audit.Warn, Msg: "server.url answered, but not as a Syncrify server (its build-number operation returned nothing recognisable). Check the URL, port and any path prefix."})
+	}
 	st.Profiles = []ProfileStatus{} // JSON [] not null, for every client
-	failed, warned, running := 0, 0, 0
+	failed, warned, running, overdue := 0, 0, 0, 0
+	now := time.Now()
 	for _, p := range profs {
 		ps := ProfileStatus{Name: p.Name, Path: p.Path, Running: e.running[p.Name]}
 		spec, sched := e.specForLocked(p)
@@ -330,6 +366,18 @@ func (e *Engine) Status() Status {
 			case spec.Interval == 0 && len(spec.Days) == 7 && len(e.cfg.Profiles[p.Name].Times) == 0:
 				ps.Preset = "daily"
 			}
+		}
+		thr, setting, lastOK, over := e.staleInfoLocked(p, ps.Paused, now)
+		ps.StaleSetting, ps.Overdue = setting, over
+		if thr > 0 {
+			ps.StaleAfter = scheduler.ShortDur(thr)
+		}
+		if !lastOK.IsZero() {
+			lo := lastOK
+			ps.LastSuccess = &lo
+		}
+		if over {
+			overdue++
 		}
 		if r, ok := e.hist.Last(p.Name); ok {
 			rr := r
@@ -351,6 +399,8 @@ func (e *Engine) Status() Status {
 		st.Overall, st.Summary = "running", fmt.Sprintf("%d backup(s) running", running)
 	case failed > 0:
 		st.Overall, st.Summary = "error", fmt.Sprintf("%d profile(s) failed on last run", failed)
+	case overdue > 0:
+		st.Overall, st.Summary = "error", fmt.Sprintf("%d backup(s) overdue", overdue)
 	case st.Server != nil && !st.Server.Up:
 		st.Overall, st.Summary = "error", "Can't reach the Syncrify server"
 	case hasLevel(st.Findings, audit.Fail):
@@ -394,12 +444,16 @@ var ErrUnknownProfile = errors.New("unknown profile")
 // ErrBadPreset is returned for an unsupported schedule preset.
 var ErrBadPreset = errors.New("unknown preset (use hourly, every6h, daily or profile)")
 
+// ScheduleUpdate is a partial change to one profile's override. Nil/empty fields are left alone.
+type ScheduleUpdate struct {
+	Enabled    *bool   // pause/resume automatic runs (scheduler mode)
+	Preset     string  // hourly | every6h | daily | profile (scheduler mode)
+	StaleAfter *string // "auto" or a duration >= 1h: alert if no success within it
+}
+
 // UpdateSchedule changes a profile's override in the config file and reloads.
-// enabled (optional) pauses/resumes automatic runs; preset (optional) picks a
-// schedule: hourly, every6h, daily (every day at the default time), or
-// profile (revert to the schedule stored in the Syncrify profile itself).
 // Only discovered profiles can be edited, so the API cannot grow arbitrary config.
-func (e *Engine) UpdateSchedule(name string, enabled *bool, preset string) error {
+func (e *Engine) UpdateSchedule(name string, u ScheduleUpdate) error {
 	known := false
 	for _, p := range e.Profiles() {
 		known = known || p.Name == name
@@ -417,10 +471,10 @@ func (e *Engine) UpdateSchedule(name string, enabled *bool, preset string) error
 		cfg.Profiles = map[string]config.Override{}
 	}
 	ov := cfg.Profiles[name]
-	if enabled != nil {
-		ov.Enabled = enabled
+	if u.Enabled != nil {
+		ov.Enabled = u.Enabled
 	}
-	switch preset {
+	switch u.Preset {
 	case "":
 	case "hourly":
 		ov.Interval, ov.Days, ov.Times = "1h", nil, nil
@@ -434,10 +488,142 @@ func (e *Engine) UpdateSchedule(name string, enabled *bool, preset string) error
 	default:
 		return ErrBadPreset
 	}
+	if u.StaleAfter != nil {
+		if *u.StaleAfter == "auto" {
+			ov.StaleAfter = ""
+		} else {
+			ov.StaleAfter = *u.StaleAfter
+		}
+	}
 	cfg.Profiles[name] = ov
 	if err := config.Save(e.cfgPath, cfg); err != nil {
-		return err
+		return err // includes validation errors such as a too-short staleAfter
 	}
 	e.Reload()
 	return nil
+}
+
+// staleInfoLocked works out how long this profile may go without a successful
+// backup and whether it is overdue. Requires e.mu (read). Precedence:
+// per-profile staleAfter > global staleAfter > derived from the profile's weekday
+// schedule (longest gap + 12h grace) or SyncAmp interval (2x + 1h). With no
+// expectation known, a profile is never "overdue" (we do not guess).
+func (e *Engine) staleInfoLocked(p profiles.Profile, paused bool, now time.Time) (thr time.Duration, setting string, lastOK time.Time, overdue bool) {
+	ov := e.cfg.Profiles[p.Name]
+	setting, explicit := "auto", false
+	switch {
+	case ov.StaleAfter != "" && ov.StaleAfter != "auto":
+		thr, setting, explicit = config.Dur(ov.StaleAfter, 0), ov.StaleAfter, true
+	case ov.StaleAfter == "" && e.cfg.StaleAfter != "" && e.cfg.StaleAfter != "auto":
+		thr, setting, explicit = config.Dur(e.cfg.StaleAfter, 0), e.cfg.StaleAfter, true
+	}
+	if thr == 0 {
+		days := p.Days
+		// SyncAmp's own schedule overrides only describe reality in scheduler mode; in
+		// monitor mode the Syncrify client runs the profile's schedule, so expect that.
+		scheduling := e.cfg.Mode == "scheduler"
+		if scheduling && len(ov.Days) > 0 {
+			if d, err := scheduler.ParseDays(ov.Days); err == nil {
+				days = d
+			}
+		}
+		switch {
+		case scheduling && ov.Interval != "" && config.Dur(ov.Interval, 0) > 0:
+			thr = 2*config.Dur(ov.Interval, 0) + time.Hour
+		case scheduler.MaxGap(days) > 0:
+			thr = scheduler.MaxGap(days) + 12*time.Hour
+		}
+	}
+	if r, ok := e.hist.LastSuccess(p.Name); ok {
+		lastOK = r.End
+	}
+	if thr == 0 || paused {
+		return
+	}
+	switch {
+	case !lastOK.IsZero():
+		overdue = now.Sub(lastOK) > thr
+	case explicit:
+		overdue = now.Sub(e.started) > thr // asked to watch it, and nothing has succeeded since we started
+	}
+	return
+}
+
+// freshnessLoop alerts once when a backup becomes overdue and once when it recovers.
+func (e *Engine) freshnessLoop(ctx context.Context) {
+	alerted := map[string]bool{}
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(5 * time.Minute):
+		}
+		type note struct{ msg string }
+		var notes []note
+		now := time.Now()
+		e.mu.RLock()
+		webhook := e.cfg.Webhook
+		for _, p := range e.profs {
+			ov := e.cfg.Profiles[p.Name]
+			paused := ov.Enabled != nil && !*ov.Enabled
+			thr, _, lastOK, over := e.staleInfoLocked(p, paused, now)
+			switch {
+			case over && !alerted[p.Name]:
+				alerted[p.Name] = true
+				since := "no success seen yet"
+				if !lastOK.IsZero() {
+					since = "last success " + now.Sub(lastOK).Round(time.Minute).String() + " ago"
+				}
+				notes = append(notes, note{fmt.Sprintf("Backup %q is overdue: %s (expected within %s)", p.Name, since, scheduler.ShortDur(thr))})
+			case !over && alerted[p.Name]:
+				delete(alerted, p.Name)
+				notes = append(notes, note{fmt.Sprintf("Backup %q is back on schedule", p.Name)})
+			}
+		}
+		e.mu.RUnlock()
+		for _, n := range notes {
+			log.Print(n.msg)
+			_ = notify.Send(ctx, webhook, n.msg)
+		}
+	}
+}
+
+// logLoop (opt-in) records outcomes read from the Syncrify client's own logs.
+func (e *Engine) logLoop(ctx context.Context) {
+	for {
+		if cfg := e.Config(); cfg.LogWatch {
+			e.scanLogs(ctx, cfg)
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(time.Minute):
+		}
+	}
+}
+
+func (e *Engine) scanLogs(ctx context.Context, cfg config.Config) {
+	var names []string
+	for _, p := range e.Profiles() {
+		names = append(names, p.Name)
+	}
+	pat := logwatch.Patterns{Success: runner.Compile(cfg.SuccessPatterns), Warn: runner.Compile(cfg.WarnPatterns), Fail: runner.Compile(cfg.FailurePatterns)}
+	for _, o := range logwatch.Scan(cfg.ProfileDirs, cfg.LogDirs, names, pat) {
+		// Already recorded (by content), or it is the log of a run we started ourselves.
+		if e.hist.HasSource(o.Key) || e.hist.Near(o.Profile, o.End, 3*time.Minute) {
+			continue
+		}
+		run := store.Run{Profile: o.Profile, Start: o.End, End: o.End, Status: o.Status, Trigger: "observed", Source: o.Key}
+		if o.Status != "success" {
+			run.Error = o.Detail
+		}
+		if err := e.hist.Add(run); err != nil {
+			log.Printf("save observed run: %v", err)
+			continue
+		}
+		log.Printf("observed %s for %q in %s", o.Status, o.Profile, filepath.Base(o.File))
+		if o.Status == "failed" {
+			_ = notify.Send(ctx, cfg.Webhook, fmt.Sprintf("Backup %q failed (seen in client log): %s", o.Profile, o.Detail))
+		}
+	}
 }

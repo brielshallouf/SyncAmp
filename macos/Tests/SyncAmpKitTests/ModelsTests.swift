@@ -9,7 +9,7 @@ final class ModelsTests: XCTestCase {
      "profiles":[
        {"name":"Documents","path":"/x","running":false,"scheduled":true,"paused":false,
         "last":{"profile":"Documents","start":"2026-11-27T18:56:09.123456789Z","end":"2026-11-27T18:56:10.5-08:00","status":"success","exitCode":0,"trigger":"manual"}},
-       {"name":"Photos","path":"/y","running":false,"scheduled":true,"paused":false,
+       {"name":"Photos","path":"/y","running":false,"scheduled":true,"paused":false,"overdue":true,"lastSuccess":"2026-11-25T02:00:00.123456789Z",
         "last":{"profile":"Photos","start":"2026-11-27T18:56:07Z","end":"2026-11-27T18:56:08Z","status":"failed","error":"unable to connect","trigger":"schedule"}},
        {"name":"Scratch","path":"/z","running":false,"scheduled":false,"paused":true}
      ],
@@ -21,6 +21,9 @@ final class ModelsTests: XCTestCase {
         XCTAssertEqual(s.overall, "error")
         XCTAssertEqual(s.profiles.count, 3)
         XCTAssertEqual(s.profiles[1].last?.error, "unable to connect")
+        XCTAssertTrue(s.profiles[1].overdue)
+        XCTAssertNotNil(s.profiles[1].lastSuccess)
+        XCTAssertFalse(s.profiles[0].overdue, "missing overdue defaults to false")
         XCTAssertTrue(s.profiles[2].paused)
         XCTAssertNil(s.profiles[2].last)
         XCTAssertEqual(s.findings.first?.level, "WARN")

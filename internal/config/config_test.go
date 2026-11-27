@@ -73,22 +73,36 @@ func TestSaveIsOwnerOnlyAndRoundTrips(t *testing.T) {
 	}
 }
 
-func TestSchedulingValidation(t *testing.T) {
-	for _, ok := range []string{"", "auto", "off"} {
+func TestModeAndStaleValidation(t *testing.T) {
+	for _, ok := range []string{"", "monitor", "scheduler"} {
 		c := Default()
-		c.Scheduling = ok
+		c.Mode = ok
 		if err := c.Validate(); err != nil {
-			t.Errorf("%q rejected: %v", ok, err)
+			t.Errorf("mode %q rejected: %v", ok, err)
+		}
+	}
+	if Default().Mode != "monitor" {
+		t.Error("default mode must be monitor: the client schedules itself, so SyncAmp must not double-run backups")
+	}
+	bad := map[string]func(*Config){
+		"bad mode":         func(c *Config) { c.Mode = "auto" },
+		"stale too short":  func(c *Config) { c.StaleAfter = "10m" },
+		"stale garbage":    func(c *Config) { c.StaleAfter = "soon" },
+		"profile stale":    func(c *Config) { c.Profiles = map[string]Override{"a": {StaleAfter: "5m"}} },
+		"bad warn pattern": func(c *Config) { c.WarnPatterns = []string{"("} },
+		"bad success pat":  func(c *Config) { c.SuccessPatterns = []string{"("} },
+	}
+	for name, mut := range bad {
+		c := Default()
+		mut(&c)
+		if c.Validate() == nil {
+			t.Errorf("%s: expected error", name)
 		}
 	}
 	c := Default()
-	c.Scheduling = "sometimes"
-	if c.Validate() == nil {
-		t.Error("bad scheduling accepted")
-	}
-	c = Default()
-	c.WarnPatterns = []string{"("}
-	if c.Validate() == nil {
-		t.Error("bad warn pattern accepted")
+	c.StaleAfter = "auto"
+	c.Profiles = map[string]Override{"a": {StaleAfter: "26h"}}
+	if err := c.Validate(); err != nil {
+		t.Errorf("valid stale settings rejected: %v", err)
 	}
 }

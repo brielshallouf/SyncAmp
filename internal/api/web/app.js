@@ -42,10 +42,28 @@ function setHero(overall, summary, sub) {
 }
 const outcome = s => s === 'success' ? 'Succeeded' : s === 'warning' ? 'Finished with warnings' : s === 'timeout' ? 'Timed out' : 'Failed';
 
+let mode = 'monitor';
 const PRESETS = [['hourly', 'Hourly'], ['every6h', 'Every 6 h'], ['daily', 'Daily']];
+const STALE = [['auto', 'Auto'], ['12h', '12 h'], ['24h', '24 h'], ['48h', '48 h'], ['168h', '1 week']];
 async function schedule(name, body) { try { await api('/api/profiles/' + encodeURIComponent(name) + '/schedule', 'POST', body); } catch (e) {} load(); }
 
+function staleDrawer(p) {
+  const d = el('div', '', 'drawer');
+  const t = el('div', '', 't'); t.appendChild(el('b', 'Alert if overdue'));
+  t.appendChild(el('span', p.staleAfter ? 'No successful backup in ' + p.staleAfter + (p.staleSetting === 'auto' ? ' (from its schedule)' : '') : 'No expectation known: pick a time below'));
+  d.appendChild(t);
+  const chips = el('div', '', 'chips');
+  STALE.forEach(([id, label]) => {
+    const c = el('button', label, 'chip' + (p.staleSetting === id ? ' sel' : ''));
+    c.addEventListener('click', () => schedule(p.name, { staleAfter: id }));
+    chips.appendChild(c);
+  });
+  d.appendChild(chips);
+  d.appendChild(el('p', 'Last success: ' + (p.lastSuccess ? ago(p.lastSuccess) : 'not seen yet') + '. The Syncrify client runs its own schedule; SyncAmp watches it.', 'note'));
+  return d;
+}
 function drawer(p) {
+  if (mode !== 'scheduler') return staleDrawer(p);
   const d = el('div', '', 'drawer');
   const s = el('div', '', 'setting');
   const t = el('div'); t.appendChild(el('b', 'Run on schedule'));
@@ -68,12 +86,13 @@ function profileItem(p) {
   const li = el('li', '', 'item' + (open.has(p.name) ? ' open' : ''));
   const row = el('div', '', 'row'); row.tabIndex = 0; row.setAttribute('role', 'button');
   row.setAttribute('aria-expanded', String(open.has(p.name)));
-  const state = p.running ? 'running' : p.paused ? 'paused' : p.last ? p.last.status : 'unknown';
+  const state = p.running ? 'running' : p.paused ? 'paused' : p.overdue ? 'overdue' : p.last ? p.last.status : 'unknown';
   row.appendChild(el('span', '', 'dot ' + state));
   const g = el('div', '', 'grow'); g.appendChild(el('b', p.name));
   let line;
   if (p.running) line = 'Backing up now…';
   else if (p.paused) line = 'Paused';
+  else if (p.overdue) line = 'Overdue · ' + (p.lastSuccess ? 'last success ' + ago(p.lastSuccess) : 'no success seen yet');
   else if (!p.last) line = p.scheduled ? 'Waiting for first run' : 'Manual · never run';
   else line = outcome(p.last.status) + ' ' + ago(p.last.end);
   g.appendChild(el('span', line));
@@ -109,12 +128,14 @@ async function load() {
     const sum = await (await fetch('/api/summary')).json();
     if (!token) { setHero(sum.overall, sum.summary); return signOut(); }
     const s = await api('/api/status'), h = await api('/api/history');
+    mode = s.mode || 'monitor';
+    $('backupsSub').textContent = mode === 'scheduler' ? 'Select a backup to adjust its schedule' : 'Select a backup to set its overdue alert';
     $('login').hidden = true; $('app').hidden = false; $('topactions').hidden = false;
     const finished = s.profiles.map(p => p.last && p.last.end).filter(valid).sort().pop();
     const parts = [];
     if (s.overall === 'ok' || s.overall === 'running') parts.push(finished ? 'Last backup ' + ago(finished) : 'No backups yet');
     else parts.push(s.summary);
-    if (s.server) parts.push(s.server.up ? 'Server reachable' : 'Can\'t reach server');
+    if (s.server) parts.push(s.server.up ? (s.server.identified && s.server.build ? 'Server build ' + s.server.build : 'Server reachable') : 'Can\'t reach server');
     setHero(s.overall, s.summary, parts.join(' · '));
     const nl = $('notices'); nl.replaceChildren();
     (s.findings || []).forEach(f => nl.appendChild(el('li', f.msg, f.level)));

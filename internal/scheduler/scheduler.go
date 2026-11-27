@@ -103,3 +103,40 @@ func (s Spec) Describe() string {
 	}
 	return days + " · " + strings.Join(s.Times, ", ")
 }
+
+// MaxGap is the longest stretch between two consecutive scheduled days
+// (cyclic over the week), i.e. how long a healthy profile can legitimately go
+// without a backup. 0 means "no schedule known". Daily => 24h, Mon+Thu => 4d.
+func MaxGap(days []time.Weekday) time.Duration {
+	var have [7]bool
+	n := 0
+	for _, d := range days {
+		if d >= 0 && d < 7 && !have[d] {
+			have[d] = true
+			n++
+		}
+	}
+	if n == 0 {
+		return 0
+	}
+	if n == 7 {
+		return 24 * time.Hour
+	}
+	maxGap, last, first := 0, -1, -1
+	for d := 0; d < 7; d++ {
+		if !have[d] {
+			continue
+		}
+		if first < 0 {
+			first = d
+		}
+		if last >= 0 && d-last > maxGap {
+			maxGap = d - last
+		}
+		last = d
+	}
+	if wrap := first + 7 - last; wrap > maxGap { // Sat -> next Sun etc.
+		maxGap = wrap
+	}
+	return time.Duration(maxGap) * 24 * time.Hour
+}

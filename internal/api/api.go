@@ -92,8 +92,9 @@ func Handler(e *core.Engine, token string) http.Handler {
 	}))
 	mux.HandleFunc("POST /api/profiles/{name}/schedule", protected(func(w http.ResponseWriter, r *http.Request) {
 		var body struct {
-			Enabled *bool  `json:"enabled"`
-			Preset  string `json:"preset"`
+			Enabled    *bool   `json:"enabled"`
+			Preset     string  `json:"preset"`
+			StaleAfter *string `json:"staleAfter"`
 		}
 		dec := json.NewDecoder(r.Body)
 		dec.DisallowUnknownFields()
@@ -101,11 +102,13 @@ func Handler(e *core.Engine, token string) http.Handler {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid body"})
 			return
 		}
-		switch err := e.UpdateSchedule(r.PathValue("name"), body.Enabled, body.Preset); {
+		switch err := e.UpdateSchedule(r.PathValue("name"), core.ScheduleUpdate{Enabled: body.Enabled, Preset: body.Preset, StaleAfter: body.StaleAfter}); {
 		case errors.Is(err, core.ErrUnknownProfile):
 			writeJSON(w, http.StatusNotFound, map[string]string{"error": err.Error()})
 		case errors.Is(err, core.ErrBadPreset):
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		case err != nil && strings.Contains(err.Error(), "staleAfter"):
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "staleAfter must be \"auto\" or a duration of at least 1h"})
 		case err != nil:
 			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "could not save schedule"})
 		default:
