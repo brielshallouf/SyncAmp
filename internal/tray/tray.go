@@ -18,11 +18,11 @@ type status struct {
 
 // Run shows the tray icon and blocks until the user quits. base is the
 // service API root, e.g. http://127.0.0.1:5801.
-func Run(base string) {
-	systray.Run(func() { onReady(base) }, func() {})
+func Run(base, token string) {
+	systray.Run(func() { onReady(base, token) }, func() {})
 }
 
-func onReady(base string) {
+func onReady(base, token string) {
 	systray.SetIcon(iconFor("unknown"))
 	systray.SetTitle("SyncAmp")
 	systray.SetTooltip("SyncAmp: connecting…")
@@ -31,19 +31,23 @@ func onReady(base string) {
 	systray.AddSeparator()
 	mOpen := systray.AddMenuItem("Open dashboard", "")
 	mRun := systray.AddMenuItem("Run all backups now", "")
+	if token == "" {
+		mRun.SetTitle("Run all backups (needs administrator)")
+		mRun.Disable()
+	}
 	systray.AddSeparator()
 	mQuit := systray.AddMenuItem("Quit tray", "The SyncAmp service keeps running")
 
 	client := &http.Client{Timeout: 5 * time.Second}
 	post := func(path string) {
 		req, _ := http.NewRequest(http.MethodPost, base+path, nil)
-		req.Header.Set("X-SyncAmp", "1")
+		req.Header.Set("Authorization", "Bearer "+token)
 		if resp, err := client.Do(req); err == nil {
 			resp.Body.Close()
 		}
 	}
 	poll := func() {
-		resp, err := client.Get(base + "/api/status")
+		resp, err := client.Get(base + "/api/summary")
 		if err != nil {
 			systray.SetIcon(iconFor("unknown"))
 			systray.SetTooltip("SyncAmp service not reachable")

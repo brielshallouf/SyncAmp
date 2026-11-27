@@ -31,41 +31,56 @@ From Synametrics' documentation:
 ## Architecture
 
 ```
- syncamp (service)  ── runs as Windows service / systemd unit
-   ├─ profiles   discover & parse *.syncrify (read-only, secrets masked)
+ syncamp (service + CLI)        ── Windows service / systemd unit; no GUI code linked
+   ├─ profiles   discover & parse *.syncrify (read-only; symlinks, bad names, >1 MiB refused)
    ├─ scheduler  days×times or interval, window-based "due" check
-   ├─ runner     launches the Syncrify client, captures output, kills tree on timeout
-   ├─ store      run history (JSON)      ├─ monitor  server health
-   ├─ notify     webhook                 └─ api      127.0.0.1:5801 + dashboard
- syncamp tray   ── per-user process; polls the API (a service can't draw a tray icon: Windows session 0)
+   ├─ runner     launches the Syncrify client, redacts output, kills the process tree on timeout,
+   │             (Linux, root service) drops to the profile owner's uid/gid
+   ├─ store / monitor / notify / audit
+   └─ api        127.0.0.1:5801, bearer-token auth + web dashboard
+ syncamp-tray                   ── optional, per-user binary; polls the public /api/summary
 ```
 
-Only `internal/platform` and the tiny `runner/proc_*.go` files contain OS-specific code.
+Only `internal/platform` and `internal/runner/proc_*.go` contain OS-specific code.
 
-## Install
+## Install (headless-friendly: no GUI needed anywhere)
 
-Download/build (`make dist` produces Windows and Linux binaries), then from an **elevated** prompt / root:
+From an elevated prompt / root, with the `syncamp` binary for your OS (`make dist` builds all):
 
 ```
-syncamp install      # Windows service / systemd unit
+syncamp install        # creates secured data dir + API token, registers service
+syncamp doctor         # security/config audit; fix anything FAIL/WARN
 syncamp start
-syncamp tray-autostart on     # run as the logged-in user; starts the tray at login
-syncamp tray
+syncamp status         # exit 0 ok / 1 warn / 2 error — usable from cron, Nagios, Zabbix
 ```
 
-Open the dashboard at <http://127.0.0.1:5801/>. Other commands: `status`, `profiles`, `backup [NAME]`, `init`, `restart`, `uninstall`.
+Everything is scriptable from the CLI:
+
+| Command | Purpose |
+|---|---|
+| `status [-json]` / `doctor [-json]` | health and security audit |
+| `profiles`, `history [-n N]`, `logs NAME` | inspect profiles, runs, last run's (redacted) output |
+| `backup [-wait] [NAME]` | trigger; with `-wait` blocks and exits non-zero on failure (good for scripts/CI) |
+| `profile enable\|disable\|reset NAME` | per-profile switches |
+| `profile schedule NAME -days mon,wed -times 02:00` / `-interval 6h` | override schedules |
+| `config show\|validate\|set KEY VALUE` | safe edits (webhook, server.url, clientPath, …); webhook is shown redacted |
+| `token` | print the API token for the web dashboard (`http://127.0.0.1:5801/`, e.g. via `ssh -L 5801:127.0.0.1:5801`) |
+| `init`, `start/stop/restart`, `uninstall`, `run`, `version` | lifecycle |
+
+Desktop users can additionally run `syncamp-tray` (and `syncamp-tray autostart on`) for the status icon.
 
 ## Configuration
 
-`%ProgramData%\SyncAmp\config.json` (Windows) or `/var/lib/syncamp/config.json` (Linux root); `syncamp init` writes defaults.
+`%ProgramData%\SyncAmp\config.json` (Windows) or `/var/lib/syncamp/config.json` (Linux); `syncamp init` writes defaults. Unknown keys are rejected (a typo in a security option must not be silently ignored).
 
 ```json
 {
   "clientPath": "C:\\Program Files\\Syncrify Client\\SyncrifyClient.exe",
   "clientArgs": ["{profile}"],
+  "profileDirs": ["C:\\Users\\alice\\.syncrify"],
   "defaultTimes": ["02:00"],
   "webhook": "https://hooks.example.com/...",
-  "server": { "url": "http://backup.lan:5800", "checkInterval": "1m" },
+  "server": { "url": "https://backup.lan:5800", "checkInterval": "1m" },
   "profiles": {
     "Documents": { "days": ["mon","wed","fri"], "times": ["12:30","22:00"] },
     "Photos":    { "interval": "6h" },
@@ -74,16 +89,29 @@ Open the dashboard at <http://127.0.0.1:5801/>. Other commands: `status`, `profi
 }
 ```
 
-`clientPath` is auto-detected in common install locations. `clientArgs` defaults to `["-console","{profile}"]`; if your launcher takes just the profile (as in Syncrify's Windows docs), set `["{profile}"]`. Time of day is not stored in a way SyncAmp relies on, so profile `schedulerDays` are combined with `defaultTimes` unless overridden.
+`clientPath` is auto-detected in standard install locations (never via `PATH`). `clientArgs` defaults to `["-console","{profile}"]`; if your launcher takes just the profile, use `["{profile}"]`. By default only the service account's own `~/.syncrify` is scanned — see **Windows profile folders** in [SECURITY.md](SECURITY.md) before adding other users' folders.
 
 ## Security
 
-The API binds to loopback only, rejects non-loopback `Host` headers (DNS rebinding) and requires an `X-SyncAmp` header on POSTs (CSRF). It exposes no secrets (profile passwords/keys are masked). Webhook URLs and history are stored unencrypted in the data directory.
+Backups are sensitive, so the service is locked down by default: loopback-only API with token auth, owner-only config/token/history, refusal to run a client that unprivileged users can modify, least-privilege execution on Linux, credential redaction, and a hardened systemd unit. Read **[SECURITY.md](SECURITY.md)** for the threat model, what is and isn't covered, and Windows-specific guidance.
+
+## Toolchain & dependencies (audited 2026-11-27)
+
+| | Version | Note |
+|---|---|---|
+| Go | 1.27.4 (latest) | `go.mod` pins it; the previous 1.24 is out of support |
+| `github.com/kardianos/service` | v1.3.0 | latest; service/systemd integration |
+| `fyne.io/systray` | v1.12.2 | latest; **only** in `syncamp-tray` |
+| `github.com/godbus/dbus/v5` | v5.2.4 | transitive (tray); was 5.1.0 from 2022 |
+| `golang.org/x/sys` | v0.50.0 | transitive; was 11 months old |
+
+All shipped binaries (Windows/Linux × amd64/arm64) scan clean with `govulncheck -mode=binary` (`make vuln`). CI re-scans weekly, and Dependabot proposes updates. `make dist` writes `dist/SHA256SUMS`; binaries are static (`CGO_ENABLED=0`) and built with `-trimpath`.
 
 ## Status / limitations
 
-- Verified: unit tests for scheduling, profile parsing, runner outcomes and the API guard; end-to-end run on Linux with a stub client; Windows cross-compiles.
-- **Not yet tested on a real Windows host or with a real Syncrify client/server.** The profile XML schema beyond `schedulerDays` is inferred, and failure patterns (`config.failurePatterns`) are heuristics to tune against real client output.
-- The tray was not exercised in a desktop session. It uses `fyne.io/systray`; Linux needs a StatusNotifier-capable desktop (GNOME needs an AppIndicator extension).
-- Missed slots while the service was *stopped* are not replayed (only sleep/late ticks are).
-- Not yet implemented: server-side management (users, quotas), restore verification, installer (MSI), code signing, per-profile tray submenus.
+- **Verified (Linux):** unit tests incl. race detector; end-to-end with a stub client covering CLI, exit codes, token auth, symlink refusal, redaction, privilege drop to the profile owner, refusal of a world-writable client, fail-closed config, startup permission repair; vulnerability scans of all binaries.
+- **Compiles but untested on a real Windows host:** the Windows service path, `icacls` ACL hardening (`internal/platform/perms_windows.go`), the tray (ICO icon, `reg add` autostart), and the console-hiding/`taskkill` process-tree code.
+- **Untested here:** the hardened systemd unit (no systemd in the build sandbox) — run `systemctl status syncamp` after install and report any sandbox denial.
+- **Never tested with a real Syncrify client/server.** The profile XML schema beyond `schedulerDays` is inferred; `failurePatterns` are heuristics to tune against real client output.
+- Slots missed while the service was *stopped* are not replayed (only sleep/late ticks are).
+- Not implemented: MSI installer, code signing, restore verification, server-side management.

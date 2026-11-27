@@ -4,6 +4,8 @@ package runner
 
 import (
 	"context"
+	"os"
+	"strings"
 	"testing"
 	"time"
 )
@@ -37,5 +39,58 @@ func TestMissingClient(t *testing.T) {
 	r := Run(context.Background(), "p", "x", "manual", Options{})
 	if r.Status != "failed" {
 		t.Error("expected failure with no client")
+	}
+}
+
+func TestRedactsSecretsInStoredOutput(t *testing.T) {
+	r := Run(context.Background(), "p", "/x", "manual", Options{
+		ClientPath: "/bin/sh",
+		Args:       []string{"-c", `echo "connecting password=hunter2 ok"; echo 'token: abc123'; echo "encryptionKey \"my key\""; echo "Authorization: Bearer xyz"`},
+		Timeout:    5 * time.Second,
+	})
+	out := strings.Join(r.Tail, "\n")
+	for _, leak := range []string{"hunter2", "abc123", "my key", "xyz"} {
+		if strings.Contains(out, leak) {
+			t.Errorf("secret %q leaked into history: %s", leak, out)
+		}
+	}
+	if !strings.Contains(out, "connecting") {
+		t.Errorf("non-secret text lost: %s", out)
+	}
+}
+
+func TestOutputIsBounded(t *testing.T) {
+	r := Run(context.Background(), "p", "/x", "manual", Options{
+		ClientPath: "/bin/sh",
+		Args:       []string{"-c", `i=0; while [ $i -lt 500 ]; do printf 'line%d ' $i; head -c 2000 /dev/zero | tr '\0' 'a'; echo; i=$((i+1)); done`},
+		Timeout:    10 * time.Second,
+	})
+	if len(r.Tail) > 50 {
+		t.Errorf("tail not capped: %d lines", len(r.Tail))
+	}
+	for _, l := range r.Tail {
+		if len(l) > 400 {
+			t.Fatalf("line not clipped: %d bytes", len(l))
+		}
+	}
+}
+
+// Needs root (the CI/sandbox user): proves the backup really runs as the
+// profile owner and not as root.
+func TestPrivilegeDropToProfileOwner(t *testing.T) {
+	if os.Geteuid() != 0 {
+		t.Skip("needs root to drop privileges")
+	}
+	dir := t.TempDir()
+	_ = os.Chmod(dir, 0o755)
+	r := Run(context.Background(), "p", "/x", "manual", Options{
+		ClientPath: "/bin/sh",
+		Args:       []string{"-c", "id -u; echo HOME=$HOME"},
+		Timeout:    5 * time.Second,
+		RunAs:      &Cred{UID: 65534, GID: 65534},
+	})
+	out := strings.Join(r.Tail, "\n")
+	if r.Status != "success" || !strings.HasPrefix(out, "65534") {
+		t.Errorf("child must run as uid 65534; status=%s err=%s out=%q", r.Status, r.Error, out)
 	}
 }

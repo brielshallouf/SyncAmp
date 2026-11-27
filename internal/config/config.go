@@ -1,11 +1,15 @@
-// Package config loads and saves SyncAmp's JSON configuration.
+// Package config loads, validates and saves SyncAmp's JSON configuration.
 package config
 
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
+	"net"
+	"net/url"
 	"os"
 	"path/filepath"
+	"regexp"
 	"time"
 
 	"github.com/brielshallouf/syncamp/internal/platform"
@@ -21,13 +25,15 @@ type Override struct {
 
 // Server describes the Syncrify *server* to health-check (optional).
 type Server struct {
-	URL           string `json:"url,omitempty"` // e.g. http://backup.lan:5800
+	URL           string `json:"url,omitempty"` // e.g. https://backup.lan:5800
 	CheckInterval string `json:"checkInterval,omitempty"`
 }
 
-// Config is the on-disk configuration.
+// Config is the on-disk configuration. It is trusted input: whoever can write
+// it controls what the privileged service executes, so it is stored 0600 /
+// Administrators-only and validated on every load.
 type Config struct {
-	ListenAddr      string              `json:"listenAddr"`      // loopback only
+	ListenAddr      string              `json:"listenAddr"`      // must be loopback
 	ClientPath      string              `json:"clientPath"`      // Syncrify client launcher; auto-detected if empty
 	ClientArgs      []string            `json:"clientArgs"`      // {profile} is replaced by the profile path
 	ProfileDirs     []string            `json:"profileDirs"`     // extra dirs holding *.syncrify
@@ -38,9 +44,14 @@ type Config struct {
 	HistoryLimit    int                 `json:"historyLimit"`
 	Server          Server              `json:"server"`
 	Profiles        map[string]Override `json:"profiles,omitempty"`
+
+	// Dangerous opt-ins, all default false.
+	ScanAllUserHomes     bool `json:"scanAllUserHomes,omitempty"`     // see platform.OwnProfileDirs
+	AllowInsecureWebhook bool `json:"allowInsecureWebhook,omitempty"` // permit http:// webhooks
+	AllowInsecureClient  bool `json:"allowInsecureClient,omitempty"`  // run client even if it is user-writable
 }
 
-// Default returns a config with sensible defaults.
+// Default returns a config with sensible, safe defaults.
 func Default() Config {
 	return Config{
 		ListenAddr:   "127.0.0.1:5801",
@@ -56,41 +67,107 @@ func Default() Config {
 	}
 }
 
+var hhmm = regexp.MustCompile(`^([01]\d|2[0-3]):[0-5]\d$`)
+
+// Validate rejects unsafe or malformed settings. The API listener MUST be
+// loopback: SyncAmp has no TLS, so exposing it would send the API token and
+// backup status in clear text.
+func (c Config) Validate() error {
+	host, _, err := net.SplitHostPort(c.ListenAddr)
+	if err != nil {
+		return fmt.Errorf("listenAddr: %w", err)
+	}
+	if host != "localhost" {
+		ip := net.ParseIP(host)
+		if ip == nil || !ip.IsLoopback() {
+			return fmt.Errorf("listenAddr %q must be a loopback address (127.0.0.1, ::1 or localhost)", c.ListenAddr)
+		}
+	}
+	if c.ClientPath != "" && !filepath.IsAbs(c.ClientPath) {
+		return errors.New("clientPath must be an absolute path (no PATH lookup for privileged execution)")
+	}
+	for _, p := range c.FailurePatterns {
+		if _, err := regexp.Compile(p); err != nil {
+			return fmt.Errorf("failurePattern %q: %w", p, err)
+		}
+	}
+	for _, t := range c.DefaultTimes {
+		if !hhmm.MatchString(t) {
+			return fmt.Errorf("defaultTimes: %q is not HH:MM", t)
+		}
+	}
+	for n, o := range c.Profiles {
+		for _, t := range o.Times {
+			if !hhmm.MatchString(t) {
+				return fmt.Errorf("profiles[%q].times: %q is not HH:MM", n, t)
+			}
+		}
+		if o.Interval != "" {
+			if d, err := time.ParseDuration(o.Interval); err != nil || d < time.Minute {
+				return fmt.Errorf("profiles[%q].interval %q must be a duration >= 1m", n, o.Interval)
+			}
+		}
+	}
+	if c.Webhook != "" {
+		u, err := url.Parse(c.Webhook)
+		if err != nil || u.Host == "" {
+			return errors.New("webhook is not a valid URL")
+		}
+		if u.Scheme != "https" && !(u.Scheme == "http" && c.AllowInsecureWebhook) {
+			return errors.New("webhook must be https:// (set allowInsecureWebhook to override)")
+		}
+	}
+	if c.Server.URL != "" {
+		if u, err := url.Parse(c.Server.URL); err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
+			return errors.New("server.url must be an http(s) URL")
+		}
+	}
+	return nil
+}
+
 // Load reads path; a missing file yields defaults (and is not an error).
+// The result is validated.
 func Load(path string) (Config, error) {
 	c := Default()
 	b, err := os.ReadFile(path)
-	if errors.Is(err, os.ErrNotExist) {
-		return c.finish(), nil
-	}
-	if err != nil {
+	switch {
+	case errors.Is(err, os.ErrNotExist):
+	case err != nil:
 		return c, err
+	default:
+		dec := json.NewDecoder(bytesReader(b))
+		dec.DisallowUnknownFields() // a typo in a security setting must not be silently ignored
+		if err := dec.Decode(&c); err != nil {
+			return Default().finish(), fmt.Errorf("parse %s: %w", path, err)
+		}
 	}
-	if err := json.Unmarshal(b, &c); err != nil {
-		return c, err
-	}
-	return c.finish(), nil
+	c = c.finish()
+	return c, c.Validate()
 }
 
 func (c Config) finish() Config {
 	if c.ClientPath == "" {
 		c.ClientPath = platform.FindClient()
 	}
-	c.ProfileDirs = append(append([]string{}, c.ProfileDirs...), platform.ProfileDirs()...)
+	dirs := append([]string{}, c.ProfileDirs...)
+	dirs = append(dirs, platform.OwnProfileDirs()...)
+	if c.ScanAllUserHomes {
+		dirs = append(dirs, platform.AllUserProfileDirs()...)
+	}
+	c.ProfileDirs = dirs
 	return c
 }
 
-// Save writes the config atomically.
+// Save validates and writes the config atomically with owner-only permissions.
 func Save(path string, c Config) error {
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+	if err := c.Validate(); err != nil {
+		return err
+	}
+	if err := platform.SecureDir(filepath.Dir(path)); err != nil {
 		return err
 	}
 	b, _ := json.MarshalIndent(c, "", "  ")
-	tmp := path + ".tmp"
-	if err := os.WriteFile(tmp, b, 0o644); err != nil {
-		return err
-	}
-	return os.Rename(tmp, path)
+	return platform.WriteSecret(path, b)
 }
 
 // Dur parses a duration, returning def on empty/invalid input.
@@ -99,4 +176,20 @@ func Dur(s string, def time.Duration) time.Duration {
 		return d
 	}
 	return def
+}
+
+// LoadRaw reads the stored file exactly as written (no auto-detected paths
+// merged in) so CLI edits don't persist derived values. Missing file => defaults.
+func LoadRaw(path string) (Config, error) {
+	c := Default()
+	b, err := os.ReadFile(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return c, nil
+	}
+	if err != nil {
+		return c, err
+	}
+	dec := json.NewDecoder(bytesReader(b))
+	dec.DisallowUnknownFields()
+	return c, dec.Decode(&c)
 }

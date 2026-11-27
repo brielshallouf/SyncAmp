@@ -11,7 +11,7 @@ import (
 
 // prepare hides the console window the service would otherwise flash, and
 // makes cancellation kill the whole tree (the .exe launcher spawns java).
-func prepare(cmd *exec.Cmd) {
+func prepare(cmd *exec.Cmd, _ Options) error {
 	cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true, CreationFlags: 0x08000000} // CREATE_NO_WINDOW
 	cmd.Cancel = func() error {
 		kill := exec.Command("taskkill", "/T", "/F", "/PID", strconv.Itoa(cmd.Process.Pid))
@@ -19,4 +19,5 @@ func prepare(cmd *exec.Cmd) {
 		return kill.Run()
 	}
 	cmd.WaitDelay = 5 * time.Second
+	return nil
 }

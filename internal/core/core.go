@@ -11,6 +11,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/brielshallouf/syncamp/internal/audit"
 	"github.com/brielshallouf/syncamp/internal/config"
 	"github.com/brielshallouf/syncamp/internal/monitor"
 	"github.com/brielshallouf/syncamp/internal/notify"
@@ -29,6 +30,7 @@ type Engine struct {
 	mu      sync.RWMutex
 	cfg     config.Config
 	profs   []profiles.Profile
+	skipped []profiles.Skipped
 	running map[string]bool
 	lastRun map[string]time.Time
 	health  *monitor.Health
@@ -63,7 +65,7 @@ func (e *Engine) Reload() {
 	} else {
 		log.Printf("reload config: %v (keeping previous)", err)
 	}
-	e.profs = profiles.Discover(e.cfg.ProfileDirs)
+	e.profs, e.skipped = profiles.DiscoverReport(e.cfg.ProfileDirs)
 	for _, p := range e.profs {
 		if r, ok := e.hist.Last(p.Name); ok {
 			e.lastRun[p.Name] = r.End
@@ -179,10 +181,25 @@ func (e *Engine) RunProfile(name, trigger string) error {
 	go func() {
 		defer e.wg.Done()
 		log.Printf("backup %q started (%s)", name, trigger)
-		res := runner.Run(ctx, name, path, trigger, runner.Options{
+		opts := runner.Options{
 			ClientPath: cfg.ClientPath, Args: cfg.ClientArgs,
 			Timeout: config.Dur(cfg.JobTimeout, 12*time.Hour), FailRegex: runner.Compile(cfg.FailurePatterns),
-		})
+		}
+		// Least privilege: a root service runs each backup as the profile's
+		// owner, so a profile can never cause files to be read that its owner
+		// could not read themselves.
+		if platform.IsRoot() {
+			if uid, gid, ok := platform.FileOwner(path); ok && uid != 0 {
+				opts.RunAs = &runner.Cred{UID: uid, GID: gid}
+			}
+		}
+		var res store.Run
+		if bad, why := platform.UntrustedWritable(cfg.ClientPath); bad && !cfg.AllowInsecureClient {
+			res = store.Run{Profile: name, Start: time.Now(), End: time.Now(), Trigger: trigger, Status: "failed",
+				Error: "refusing to run client: " + why}
+		} else {
+			res = runner.Run(ctx, name, path, trigger, opts)
+		}
 		if err := e.hist.Add(res); err != nil {
 			log.Printf("save history: %v", err)
 		}
@@ -260,14 +277,16 @@ type ProfileStatus struct {
 
 // Status is the whole-system summary.
 type Status struct {
-	Overall  string          `json:"overall"` // ok | warn | error | running | idle
-	Summary  string          `json:"summary"`
-	OS       string          `json:"os"`
-	Client   string          `json:"client"`
-	ClientOK bool            `json:"clientFound"`
-	Uptime   string          `json:"uptime"`
-	Server   *monitor.Health `json:"server,omitempty"`
-	Profiles []ProfileStatus `json:"profiles"`
+	Overall  string             `json:"overall"` // ok | warn | error | running | idle
+	Summary  string             `json:"summary"`
+	OS       string             `json:"os"`
+	Client   string             `json:"client"`
+	ClientOK bool               `json:"clientFound"`
+	Uptime   string             `json:"uptime"`
+	Server   *monitor.Health    `json:"server,omitempty"`
+	Profiles []ProfileStatus    `json:"profiles"`
+	Skipped  []profiles.Skipped `json:"skippedProfiles,omitempty"`
+	Findings []audit.Finding    `json:"findings,omitempty"` // WARN/FAIL security findings
 }
 
 // Status computes the current summary. Rules: any running => running; server
@@ -278,6 +297,12 @@ func (e *Engine) Status() Status {
 	defer e.mu.RUnlock()
 	st := Status{OS: platform.OSName(), Client: e.cfg.ClientPath, ClientOK: e.cfg.ClientPath != "",
 		Uptime: time.Since(e.started).Round(time.Second).String(), Server: e.health}
+	st.Skipped = e.skipped
+	for _, f := range audit.Check(e.cfgPath, e.cfg) {
+		if f.Level == audit.Warn || f.Level == audit.Fail {
+			st.Findings = append(st.Findings, f)
+		}
+	}
 	failed, running := 0, 0
 	for _, p := range profs {
 		ps := ProfileStatus{Name: p.Name, Path: p.Path, Running: e.running[p.Name]}
@@ -301,12 +326,35 @@ func (e *Engine) Status() Status {
 		st.Overall, st.Summary = "error", fmt.Sprintf("%d profile(s) failed on last run", failed)
 	case st.Server != nil && !st.Server.Up:
 		st.Overall, st.Summary = "error", "Syncrify server unreachable"
+	case hasLevel(st.Findings, audit.Fail):
+		st.Overall, st.Summary = "error", "configuration problem: run `syncamp doctor`"
 	case !st.ClientOK:
 		st.Overall, st.Summary = "warn", "Syncrify client not found"
 	case len(profs) == 0:
 		st.Overall, st.Summary = "warn", "No Syncrify profiles found"
+	case hasLevel(st.Findings, audit.Warn):
+		st.Overall, st.Summary = "warn", "security warnings: run `syncamp doctor`"
 	default:
 		st.Overall, st.Summary = "ok", fmt.Sprintf("%d profile(s) healthy", len(profs))
 	}
 	return st
 }
+
+func hasLevel(fs []audit.Finding, l string) bool {
+	for _, f := range fs {
+		if f.Level == l {
+			return true
+		}
+	}
+	return false
+}
+
+// Config returns a copy of the effective configuration.
+func (e *Engine) Config() config.Config {
+	e.mu.RLock()
+	defer e.mu.RUnlock()
+	return e.cfg
+}
+
+// CfgPath returns the config file path.
+func (e *Engine) CfgPath() string { return e.cfgPath }

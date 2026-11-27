@@ -3,6 +3,7 @@ package profiles
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -33,5 +34,33 @@ func TestParseAndDiscover(t *testing.T) {
 	}
 	if p.Fields["encryptionKey"] != "***" || p.Fields["password"] != "***" {
 		t.Errorf("secrets leaked: %v", p.Fields)
+	}
+}
+
+func TestSymlinkOversizeAndBadNamesRefused(t *testing.T) {
+	dir := t.TempDir()
+	secret := filepath.Join(t.TempDir(), "shadow")
+	_ = os.WriteFile(secret, []byte("<a><b>root:hash</b></a>"), 0o600)
+	if err := os.Symlink(secret, filepath.Join(dir, "link.syncrify")); err != nil {
+		t.Skip("symlinks unavailable:", err)
+	}
+	_ = os.WriteFile(filepath.Join(dir, "it's<b>.syncrify"), []byte("<a/>"), 0o600)
+	_ = os.WriteFile(filepath.Join(dir, ".hidden.syncrify"), []byte("<a/>"), 0o600)
+	_ = os.WriteFile(filepath.Join(dir, "good.syncrify"), []byte("<a><x>1</x></a>"), 0o600)
+	// Oversized: valid XML far beyond the limit must not be fully read.
+	big := "<a>" + strings.Repeat("<x>1</x>", 400000) + "</a>"
+	_ = os.WriteFile(filepath.Join(dir, "big.syncrify"), []byte(big), 0o600)
+
+	ps, skipped := DiscoverReport([]string{dir})
+	if len(ps) != 1 || ps[0].Name != "good" {
+		t.Fatalf("only 'good' should be accepted, got %+v", ps)
+	}
+	if len(skipped) != 4 {
+		t.Errorf("want 4 skipped with reasons, got %+v", skipped)
+	}
+	for _, s := range skipped {
+		if s.Reason == "" {
+			t.Errorf("skipped without reason: %s", s.Path)
+		}
 	}
 }

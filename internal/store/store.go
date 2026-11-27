@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"sync"
 	"time"
+
+	"github.com/brielshallouf/syncamp/internal/platform"
 )
 
 // Run is the record of one backup execution.
@@ -56,15 +58,11 @@ func (s *Store) Add(r Run) error {
 	if s.limit > 0 && len(s.runs) > s.limit {
 		s.runs = s.runs[len(s.runs)-s.limit:]
 	}
-	if err := os.MkdirAll(filepath.Dir(s.path), 0o755); err != nil {
+	if err := platform.SecureDir(filepath.Dir(s.path)); err != nil {
 		return err
 	}
 	b, _ := json.Marshal(s.runs)
-	tmp := s.path + ".tmp"
-	if err := os.WriteFile(tmp, b, 0o644); err != nil {
-		return err
-	}
-	return os.Rename(tmp, s.path)
+	return platform.WriteSecret(s.path, b)
 }
 
 // All returns a copy, oldest first.

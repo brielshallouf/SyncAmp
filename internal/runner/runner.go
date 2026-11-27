@@ -14,7 +14,14 @@ import (
 	"github.com/brielshallouf/syncamp/internal/store"
 )
 
-const tailLines = 100
+const (
+	tailLines   = 50  // lines of client output kept in history
+	maxLineLen  = 300 // longer lines are truncated (bounds history size)
+	redactedStr = "[REDACTED]"
+)
+
+// Cred identifies the unix account a backup should run as.
+type Cred struct{ UID, GID uint32 }
 
 // Options controls one execution.
 type Options struct {
@@ -22,6 +29,9 @@ type Options struct {
 	Args       []string // "{profile}" is substituted
 	Timeout    time.Duration
 	FailRegex  []*regexp.Regexp
+	// RunAs, when set (unix, service is root), drops the child to this account
+	// so a backup can only read what the profile's owner could read.
+	RunAs *Cred
 }
 
 // Compile turns pattern strings into regexps, skipping invalid ones.
@@ -33,6 +43,27 @@ func Compile(patterns []string) []*regexp.Regexp {
 		}
 	}
 	return out
+}
+
+// secretRe masks values that look like credentials before output is stored or
+// sent to a webhook: client logs sometimes echo connection parameters.
+var secretRe = regexp.MustCompile(`(?i)\b(pass(?:word|wd)?|secret|token|api[-_ ]?key|encryption[-_ ]?key|authorization)\b(\s*[=:]\s*|\s+)("[^"]*"|'[^']*'|\S+)`)
+
+// schemeRe masks the credential after an auth scheme ("Bearer xyz"), which the
+// key=value rule above would otherwise treat as "Bearer" being the value.
+var schemeRe = regexp.MustCompile(`(?i)\b(bearer|basic)\s+\S+`)
+
+// Redact masks credential-looking values in a line of output.
+func Redact(s string) string {
+	s = schemeRe.ReplaceAllString(s, "${1} "+redactedStr)
+	return secretRe.ReplaceAllString(s, "${1}${2}"+redactedStr)
+}
+
+func clip(s string) string {
+	if len(s) > maxLineLen {
+		return s[:maxLineLen] + "…"
+	}
+	return s
 }
 
 // Run executes the client for profilePath and returns a finished record.
@@ -57,7 +88,9 @@ func Run(ctx context.Context, name, profilePath, trigger string, o Options) stor
 		defer cancel()
 	}
 	cmd := exec.CommandContext(ctx, o.ClientPath, args...)
-	prepare(cmd)
+	if err := prepare(cmd, o); err != nil {
+		return finish("failed", err.Error())
+	}
 	pr, err := cmd.StdoutPipe()
 	if err != nil {
 		return finish("failed", err.Error())
@@ -72,17 +105,17 @@ func Run(ctx context.Context, name, profilePath, trigger string, o Options) stor
 	sc.Buffer(make([]byte, 64*1024), 1024*1024)
 	for sc.Scan() {
 		line := sc.Text()
-		tail = append(tail, line)
-		if len(tail) > tailLines {
-			tail = tail[1:]
-		}
 		if matched == "" {
 			for _, re := range o.FailRegex {
 				if re.MatchString(line) {
-					matched = line
+					matched = clip(Redact(line))
 					break
 				}
 			}
+		}
+		tail = append(tail, clip(Redact(line)))
+		if len(tail) > tailLines {
+			tail = tail[1:]
 		}
 	}
 	werr := cmd.Wait()

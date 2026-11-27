@@ -1,35 +1,17 @@
 <!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>SyncAmp</title>
-<style>
-:root{--bg:#f6f7f9;--fg:#1c2024;--card:#fff;--mut:#667;--ok:#1a7f37;--warn:#b7791f;--err:#c62828;--run:#1565c0;--bd:#e1e4e8}
-@media(prefers-color-scheme:dark){:root{--bg:#14161a;--fg:#e6e8eb;--card:#1e2126;--mut:#9aa3ad;--bd:#2d3239;--ok:#3fb950;--warn:#d4a017;--err:#f85149;--run:#58a6ff}}
-body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.5 system-ui,sans-serif}
-main{max-width:900px;margin:0 auto;padding:16px}
-.card{background:var(--card);border:1px solid var(--bd);border-radius:10px;padding:14px 16px;margin:12px 0}
-h1{font-size:20px;margin:8px 0}h2{font-size:15px;margin:0 0 8px;color:var(--mut);font-weight:600}
-.pill{display:inline-block;padding:1px 10px;border-radius:99px;font-size:13px;color:#fff}
-.ok,.success{background:var(--ok)}.warn{background:var(--warn)}.error,.failed,.timeout{background:var(--err)}.running{background:var(--run)}
-table{width:100%;border-collapse:collapse}td,th{text-align:left;padding:6px 8px;border-bottom:1px solid var(--bd);font-size:14px}
-button{font:inherit;padding:4px 12px;border-radius:6px;border:1px solid var(--bd);background:var(--card);color:var(--fg);cursor:pointer}
-button:disabled{opacity:.5}.mut{color:var(--mut)}pre{white-space:pre-wrap;font-size:12px;margin:4px 0}
-</style></head><body><main>
+<title>SyncAmp</title><link rel="stylesheet" href="/style.css"></head><body><main>
 <h1>SyncAmp <span id="overall" class="pill">…</span></h1>
-<div class="card"><div id="summary"></div><div class="mut" id="meta"></div></div>
-<div class="card"><h2>Profiles</h2><table id="profiles"></table>
-<p><button onclick="post('/api/run')">Run all now</button> <button onclick="post('/api/reload')">Rescan profiles</button></p></div>
-<div class="card"><h2>Recent runs</h2><table id="history"></table></div>
-</main><script>
-const $=id=>document.getElementById(id),esc=s=>String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
-const fmt=t=>t&&!t.startsWith('0001')?new Date(t).toLocaleString():'—';
-async function post(u){await fetch(u,{method:'POST',headers:{'X-SyncAmp':'1'}});load()}
-async function load(){try{
- const s=await(await fetch('/api/status')).json(),h=await(await fetch('/api/history')).json();
- $('overall').className='pill '+s.overall;$('overall').textContent=s.overall;
- $('summary').textContent=s.summary;
- $('meta').textContent=`${s.os} · client: ${s.client||'not found'} · up ${s.uptime}`+(s.server?` · server ${s.server.up?'up':'DOWN'} (${esc(s.server.url)})`:'');
- $('profiles').innerHTML='<tr><th>Profile<th>Last run<th>Result<th>'+s.profiles.map(p=>`<tr><td>${esc(p.name)}${p.scheduled?'':' <span class=mut>(manual)</span>'}<td>${p.last?fmt(p.last.end):'never'}<td>${p.running?'<span class="pill running">running</span>':p.last?`<span class="pill ${p.last.status}">${p.last.status}</span>`:''}<td><button ${p.running?'disabled':''} onclick="post('/api/run/'+encodeURIComponent('${esc(p.name).replace(/'/g,"\\'")}'))">Run</button>`).join('');
- $('history').innerHTML='<tr><th>Profile<th>Started<th>Trigger<th>Result<th>Detail'+h.map(r=>`<tr><td>${esc(r.profile)}<td>${fmt(r.start)}<td>${esc(r.trigger)}<td><span class="pill ${r.status}">${r.status}</span><td>${esc(r.error)}`).join('');
-}catch(e){$('summary').textContent='Cannot reach SyncAmp service'}}
-load();setInterval(load,5000);
-</script></body></html>
+<div class="card" id="login" hidden>
+  <h2>Sign in</h2>
+  <p class="mut">Paste the API token. Print it on the server with <code>syncamp token</code> (administrator/root only).</p>
+  <input id="token" type="password" autocomplete="off" placeholder="API token"> <button id="signin">Sign in</button>
+  <div id="loginerr" class="mut"></div>
+</div>
+<div id="app" hidden>
+  <div class="card"><div id="summary"></div><div class="mut" id="meta"></div><ul id="findings"></ul></div>
+  <div class="card"><h2>Profiles</h2><table id="profiles"></table>
+  <p><button id="runall">Run all now</button> <button id="reload">Rescan profiles</button> <button id="signout">Sign out</button></p></div>
+  <div class="card"><h2>Recent runs</h2><table id="history"></table></div>
+</div>
+</main><script src="/app.js"></script></body></html>

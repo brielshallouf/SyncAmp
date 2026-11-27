@@ -1,5 +1,5 @@
 // Package platform isolates every OS-specific decision (paths, client lookup,
-// browser launching) so the rest of SyncAmp stays OS-agnostic.
+// file permissions) so the rest of SyncAmp stays OS-agnostic.
 package platform
 
 import (
@@ -12,7 +12,10 @@ import (
 // IsWindows reports whether we are running on Windows.
 func IsWindows() bool { return runtime.GOOS == "windows" }
 
-// DataDir is where SyncAmp keeps its config and history.
+// OSName returns a short OS/arch label for display.
+func OSName() string { return runtime.GOOS + "/" + runtime.GOARCH }
+
+// DataDir is where SyncAmp keeps its config, token and history.
 // Windows service (LocalSystem): %ProgramData%\SyncAmp
 // Linux root/service:            /var/lib/syncamp
 // Linux/other normal user:       ~/.local/share/syncamp
@@ -34,30 +37,29 @@ func DataDir() string {
 // ConfigPath returns the default config file location.
 func ConfigPath() string { return filepath.Join(DataDir(), "config.json") }
 
-// ProfileDirs lists every directory that may hold Syncrify *.syncrify profiles.
-// Syncrify stores profiles in the *user's* home (~/.syncrify), but a Windows
-// service runs as SYSTEM, whose home is not the user's. So we scan every
-// user home we can see, not just our own.
-func ProfileDirs() []string {
-	var dirs []string
-	add := func(pattern string) {
-		m, _ := filepath.Glob(pattern)
-		dirs = append(dirs, m...)
-	}
+// OwnProfileDirs is the running account's own ~/.syncrify. This is the only
+// directory scanned by default: scanning other users' homes from a privileged
+// service lets any local user plant a profile that a SYSTEM/root backup then
+// executes (see Config.ScanAllUserHomes).
+func OwnProfileDirs() []string {
 	if home, err := os.UserHomeDir(); err == nil {
-		dirs = append(dirs, filepath.Join(home, ".syncrify"))
+		return []string{filepath.Join(home, ".syncrify")}
 	}
+	return nil
+}
+
+// AllUserProfileDirs lists every visible user's ~/.syncrify. Opt-in only.
+func AllUserProfileDirs() []string {
+	pattern, extra := "/home/*/.syncrify", []string{"/root/.syncrify"}
 	if IsWindows() {
 		sd := os.Getenv("SystemDrive")
 		if sd == "" {
 			sd = "C:"
 		}
-		add(sd + `\Users\*\.syncrify`)
-	} else {
-		add("/home/*/.syncrify")
-		dirs = append(dirs, "/root/.syncrify")
+		pattern, extra = sd+`\Users\*\.syncrify`, nil
 	}
-	return dirs
+	m, _ := filepath.Glob(pattern)
+	return append(m, extra...)
 }
 
 // ClientCandidates returns likely Syncrify client launcher paths, best first.
@@ -83,16 +85,13 @@ func ClientCandidates() []string {
 	}
 }
 
-// FindClient locates the Syncrify client launcher, or returns "".
+// FindClient locates the Syncrify client launcher, or returns "". PATH lookup
+// is deliberately not used: a service must not execute whatever a user put
+// earlier on a search path.
 func FindClient() string {
 	for _, c := range ClientCandidates() {
 		if st, err := os.Stat(c); err == nil && !st.IsDir() {
 			return c
-		}
-	}
-	for _, n := range []string{"SyncrifyClient", "SyncrifyClient.sh"} {
-		if p, err := exec.LookPath(n); err == nil {
-			return p
 		}
 	}
 	return ""
@@ -109,6 +108,3 @@ func OpenBrowser(url string) error {
 		return exec.Command("xdg-open", url).Start()
 	}
 }
-
-// OSName returns a short OS/arch label for display.
-func OSName() string { return runtime.GOOS + "/" + runtime.GOARCH }
