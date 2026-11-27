@@ -23,6 +23,7 @@ import (
 	"github.com/brielshallouf/syncamp/internal/core"
 	"github.com/brielshallouf/syncamp/internal/profiles"
 	"github.com/brielshallouf/syncamp/internal/store"
+	"github.com/brielshallouf/syncamp/internal/svcclient"
 	"github.com/brielshallouf/syncamp/internal/webui"
 )
 
@@ -55,6 +56,17 @@ func Handler(e *core.Engine, token string) http.Handler {
 		}
 	}
 
+	// Proof of identity. A client that holds the access key sends a random nonce and checks the
+	// HMAC that comes back BEFORE it sends the key itself, so a local user who grabbed the port
+	// first (while the service was stopped) learns nothing. The key never crosses the wire here.
+	mux.HandleFunc("GET /api/proof", func(w http.ResponseWriter, r *http.Request) {
+		n := r.URL.Query().Get("nonce")
+		if len(n) < 16 || len(n) > 128 || !svcclient.IsHex(n) {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "nonce must be 16-128 hex characters"})
+			return
+		}
+		writeJSON(w, 200, map[string]string{"proof": svcclient.Proof(token, n)})
+	})
 	mux.HandleFunc("GET /api/summary", func(w http.ResponseWriter, r *http.Request) {
 		st := e.Status()
 		writeJSON(w, 200, map[string]string{"overall": st.Overall, "summary": st.Summary})

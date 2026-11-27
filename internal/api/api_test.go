@@ -12,6 +12,7 @@ import (
 	"testing"
 
 	"github.com/brielshallouf/syncamp/internal/core"
+	"github.com/brielshallouf/syncamp/internal/svcclient"
 )
 
 // clientPath is an absolute path to *some* real executable on this OS (Config.Validate
@@ -260,5 +261,25 @@ func TestStaleAfterEndpoint(t *testing.T) {
 	}
 	if c := post(h, path, `{"staleAfter":"24h"}`, "").Code; c != 401 {
 		t.Errorf("needs token: %d", c)
+	}
+}
+
+func TestProofEndpoint(t *testing.T) {
+	h := Handler(newEngine(t), tok)
+	nonce := "0123456789abcdef0123456789abcdef"
+	r := do(h, "GET", "/api/proof?nonce="+nonce, "127.0.0.1:1", "") // no token needed: it proves, it does not reveal
+	if r.Code != 200 || !strings.Contains(r.Body.String(), svcclient.Proof(tok, nonce)) {
+		t.Fatalf("%d %s", r.Code, r.Body.String())
+	}
+	if strings.Contains(r.Body.String(), tok) {
+		t.Error("the response must not contain the key")
+	}
+	for _, bad := range []string{"", "short", "zzzzzzzzzzzzzzzzzzzzzzzz", strings.Repeat("a", 200)} {
+		if c := do(h, "GET", "/api/proof?nonce="+bad, "127.0.0.1:1", "").Code; c != 400 {
+			t.Errorf("nonce %q: got %d want 400", bad, c)
+		}
+	}
+	if c := do(h, "GET", "/api/proof?nonce="+nonce, "evil.example.com", "").Code; c != 403 {
+		t.Errorf("host guard: %d", c)
 	}
 }

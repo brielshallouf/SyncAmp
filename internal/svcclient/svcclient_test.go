@@ -11,8 +11,19 @@ import (
 
 const tok = "0123456789abcdef0123456789abcdef0123456789abcdef"
 
+// realService wraps h so it also answers the identity proof the way the real service does.
+func realService(h http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/proof" {
+			_, _ = w.Write([]byte(`{"proof":"` + Proof(tok, r.URL.Query().Get("nonce")) + `"}`))
+			return
+		}
+		h(w, r)
+	}
+}
+
 func setup(t *testing.T, h http.HandlerFunc, addrOverride string) *Client {
-	srv := httptest.NewServer(h)
+	srv := httptest.NewServer(realService(h))
 	t.Cleanup(srv.Close)
 	dir := t.TempDir()
 	addr := strings.TrimPrefix(srv.URL, "http://")
@@ -104,5 +115,51 @@ func TestUnreadableTokenMeansNoAuthHeader(t *testing.T) {
 	_ = os.Remove(filepath.Join(c.Dir, "api.token"))
 	if r := c.Do("GET", "/api/status", ""); r.Status != 401 || gotAuth != "" {
 		t.Errorf("status=%d auth=%q", r.Status, gotAuth)
+	}
+}
+
+// The point of the proof: a local user who grabbed the port first must never receive the key.
+func TestKeyIsNeverSentToAnImpostor(t *testing.T) {
+	var sawKey bool
+	impostor := func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Authorization") != "" {
+			sawKey = true
+		}
+		if r.URL.Path == "/api/proof" {
+			_, _ = w.Write([]byte(`{"proof":"` + strings.Repeat("0", 64) + `"}`)) // cannot know the key
+			return
+		}
+		w.WriteHeader(200)
+	}
+	srv := httptest.NewServer(http.HandlerFunc(impostor))
+	defer srv.Close()
+	dir := t.TempDir()
+	_ = os.WriteFile(filepath.Join(dir, AddrFile), []byte(strings.TrimPrefix(srv.URL, "http://")), 0o600)
+	_ = os.WriteFile(filepath.Join(dir, "api.token"), []byte(tok+"\n"), 0o600)
+	r := New(dir).Do("GET", "/api/status", "")
+	if sawKey || r.Status != 0 || !strings.Contains(r.Body, "did not prove") {
+		t.Errorf("impostor got the key=%v, result=%+v", sawKey, r)
+	}
+	// An impostor that answers nothing sensible, or errors, is refused too.
+	for _, h := range []http.HandlerFunc{
+		func(w http.ResponseWriter, r *http.Request) { http.Error(w, "no", 500) },
+		func(w http.ResponseWriter, r *http.Request) { _, _ = w.Write([]byte("not json")) },
+	} {
+		s2 := httptest.NewServer(h)
+		_ = os.WriteFile(filepath.Join(dir, AddrFile), []byte(strings.TrimPrefix(s2.URL, "http://")), 0o600)
+		if r := New(dir).Do("POST", "/api/run", ""); r.Status != 0 {
+			t.Errorf("must refuse: %+v", r)
+		}
+		s2.Close()
+	}
+}
+
+func TestProofIsKeyedAndNonceDependent(t *testing.T) {
+	a, b := Proof(tok, "aaaaaaaaaaaaaaaa"), Proof(tok, "bbbbbbbbbbbbbbbb")
+	if a == b || a == Proof("another key another key another key!!", "aaaaaaaaaaaaaaaa") || len(a) != 64 {
+		t.Error("proof must depend on both the key and the nonce")
+	}
+	if !IsHex("deadBEEF09") || IsHex("") || IsHex("xyz") || IsHex("ab cd") {
+		t.Error("IsHex misbehaves")
 	}
 }

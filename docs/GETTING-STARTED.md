@@ -15,99 +15,50 @@ not manage the Syncrify server.
 
 ## Windows
 
-**1. Download** `syncamp-windows-amd64.exe` and `syncamp-tray-windows-amd64.exe` from the
-[Releases page](https://github.com/brielshallouf/SyncAmp/releases) (see the *nightly* entry for the newest build).
+**1. Run the installer.** Download **`SyncAmp-Setup.exe`** from the [Releases page](https://github.com/brielshallouf/SyncAmp/releases) (open the *Latest development build* entry) and run it. Windows will show a SmartScreen warning because the file is not code-signed: click **More info → Run anyway** ([details](#first-run-warnings)). Say **Yes** to the administrator prompt: it is needed to register the background service.
 
-**2. Put them somewhere permanent** — the service remembers the file's location, so don't leave them in Downloads.
-In an **Administrator PowerShell**:
+**2. Make one choice.** The installer has a single checkbox, *"Let SyncAmp see my Syncrify profiles in `C:\Users\you\.syncrify`"*. It is **off by default** on purpose:
+
+- The background service runs as `SYSTEM`, and a Syncrify profile can run scripts. If SyncAmp watches a folder that *you* can write to, anything running as you could plant a profile and have `SYSTEM` run it.
+- **Tick it** on a personal PC where only you use the machine and the Syncrify client keeps its profiles in your user folder (the usual case), and you accept that trade.
+- **Leave it off** if you are unsure; the app tells you when it can't see any profiles, and you can turn it on later (below).
+
+**3. Click the SyncAmp icon next to the clock** (it may be under the **^** overflow arrow; drag it out to keep it visible). The app opens its own window beside the taskbar. That's it: no sign-in, no second download. The installer also starts SyncAmp at every login.
+
+> **How does it open without a password?** The installer gives the account that ran it read access to just two small files the service publishes (its access key and address). Any other account on the PC needs an administrator to run `syncamp grant THEIR_ACCOUNT` first.
+
+**Later: tell SyncAmp about profiles or the client.** In an **Administrator** PowerShell (the command-line program lives in `C:\Program Files\SyncAmp`):
 
 ```powershell
-New-Item -ItemType Directory "C:\Program Files\SyncAmp" -Force
-Move-Item "$env:USERPROFILE\Downloads\syncamp-windows-amd64.exe"      "C:\Program Files\SyncAmp\syncamp.exe"
-Move-Item "$env:USERPROFILE\Downloads\syncamp-tray-windows-amd64.exe" "C:\Program Files\SyncAmp\syncamp-tray.exe"
 cd "C:\Program Files\SyncAmp"
-```
-
-If Windows blocks the files, see [first-run warnings](#first-run-warnings). To check a download, compare
-`Get-FileHash .\syncamp.exe -Algorithm SHA256` with the matching line in `SHA256SUMS` (use the *original* file name).
-
-**3. Install and start the service** (still in the Administrator window):
-
-```powershell
-.\syncamp.exe install      # registers the "SyncAmp" Windows service, creates the locked-down data folder
-.\syncamp.exe doctor       # shows anything that needs fixing: read it
-.\syncamp.exe start
+.\syncamp.exe watch "C:\Users\you\.syncrify"                       # same as the checkbox
+.\syncamp.exe config set clientPath "C:\Program Files\Syncrify Client\SyncrifyClient.exe"
+.\syncamp.exe doctor                                                # tells you anything else to fix
 .\syncamp.exe status
 ```
 
-**4. Tell SyncAmp where your Syncrify profiles are.** This is the step people miss.
-The service runs as `SYSTEM` by default, which has its *own* home folder, so it will not see profiles that live in
-*your* user folder (`C:\Users\<you>\.syncrify`). `status` will say **"No Syncrify profiles found"**. Pick one:
+Not sure where your profiles are? `Get-ChildItem C:\Users -Recurse -Filter *.syncrify -ErrorAction SilentlyContinue`.
+Prefer the service to run as you instead (so no folder needs trusting)? Press `Win+R`, run `services.msc`, open **SyncAmp → Properties → Log On → This account**, enter an *administrator* account and its password, and restart the service.
 
-- **Option A — run the service as you (recommended).** Press `Win+R`, run `services.msc`, open **SyncAmp →
-  Properties → Log On → This account**, enter your Windows account (it must be an administrator) and password,
-  then restart the service. Backups now run with your rights and your profile folder is found automatically.
-- **Option B — point SyncAmp at the folder.** Edit `C:\ProgramData\SyncAmp\config.json` in an Administrator
-  Notepad (double each backslash):
-  ```json
-  { "profileDirs": ["C:\\Users\\alice\\.syncrify"] }
-  ```
-  then `.\syncamp.exe restart`. Only do this on a machine where nobody else can write to that folder: a Syncrify
-  profile can run scripts, so a folder other people can write to would let them run code as SYSTEM
-  (see [SECURITY.md](../SECURITY.md)).
+**For IT / scripted installs:** `SyncAmp-Setup.exe /VERYSILENT /SUPPRESSMSGBOXES /NORESTART` (add `/TASKS="watchprofiles"` for the profile checkbox).
 
-Not sure where your profiles are? `dir $env:USERPROFILE\.syncrify` or
-`Get-ChildItem C:\Users -Recurse -Filter *.syncrify -ErrorAction SilentlyContinue`.
-
-If `doctor` says the client was not found, set it (use the real path to your Syncrify client program):
-
-```powershell
-.\syncamp.exe config set clientPath "C:\Program Files\Syncrify Client\SyncrifyClient.exe"
-```
-
-**5. Add the tray icon** (in a normal, non-admin window is fine):
-
-```powershell
-& "C:\Program Files\SyncAmp\syncamp-tray.exe" autostart on     # start it at every login
-& "C:\Program Files\SyncAmp\syncamp-tray.exe"                  # start it now
-```
-
-The icon turns **green** (healthy), **blue** (running), **amber** (warning) or **red** (needs attention).
-Click it and choose **Open dashboard** to get the popover. The first time, it asks for a token: in your
-Administrator window run `.\syncamp.exe token`, then paste the result.
-
-**Uninstall:** `.\syncamp.exe stop`, `.\syncamp.exe uninstall`, `.\syncamp-tray.exe autostart off`, then delete
-`C:\Program Files\SyncAmp` and `C:\ProgramData\SyncAmp`.
+**Uninstall:** *Settings → Apps → SyncAmp → Uninstall*. It stops and removes the service and the login entry, and asks whether to delete your settings and history.
 
 ---
 
 ## macOS
 
-On a Mac SyncAmp runs as **you** (a login item), not as root, so there is no `sudo` and your `~/.syncrify`
-profiles are found automatically.
+On a Mac, SyncAmp runs as **you** (a login item), not as root, so there is no `sudo` and your `~/.syncrify` profiles are found automatically.
 
-**1. Download** the command-line program for your Mac (`syncamp-darwin-arm64` for Apple Silicon, `-amd64` for
-Intel) and `SyncAmp-macos.zip` from the [Releases page](https://github.com/brielshallouf/SyncAmp/releases).
+**1.** Download **`SyncAmp-macos.zip`** from the [Releases page](https://github.com/brielshallouf/SyncAmp/releases), unzip it and drag **SyncAmp** into *Applications*.
 
-**2. Install and start the service** in Terminal:
+**2.** Open it. macOS will warn that it can't verify the developer: right-click the app → **Open** → **Open** (or run `xattr -dr com.apple.quarantine /Applications/SyncAmp.app`). The first time, the app sets up its own background service (a few seconds: you will see "Setting up the background service…"). That's the whole install: there is no separate download.
 
-```bash
-chmod +x ~/Downloads/syncamp-darwin-arm64
-xattr -d com.apple.quarantine ~/Downloads/syncamp-darwin-arm64 2>/dev/null   # allow the unsigned download
-sudo mkdir -p /usr/local/bin && sudo mv ~/Downloads/syncamp-darwin-arm64 /usr/local/bin/syncamp
-syncamp install && syncamp doctor && syncamp start && syncamp status
-```
+**3.** Click the menu-bar icon. Use the **⋯** menu → *Launch at login*. On macOS 26 it uses Apple's Liquid Glass look; older versions use the system blur.
 
-**3. Add the menu-bar app:** unzip `SyncAmp-macos.zip`, drag **SyncAmp** into *Applications*, then open it.
-macOS will warn that it can't verify the developer: right-click the app → **Open** → **Open**, or run
-`xattr -dr com.apple.quarantine /Applications/SyncAmp.app`. Use the **⋯** menu → *Launch at login*.
-On macOS 26 it uses Apple's Liquid Glass look; older versions use the system blur.
+Terminal users: the command-line program is inside the app, e.g. `/Applications/SyncAmp.app/Contents/Resources/syncamp status`. If you back up protected folders, give that `syncamp` program **Full Disk Access** in *System Settings → Privacy & Security*.
 
-If you back up protected folders, give the `syncamp` program **Full Disk Access** in
-*System Settings → Privacy & Security*.
-
-> The app is built and unit-tested on macOS in CI, but has not been launched on a real desktop by its author yet.
-> Please report anything odd.
+> The app is built and unit-tested on macOS in CI, but nobody has opened it on a real desktop yet. Please report anything odd.
 
 ---
 
@@ -129,14 +80,13 @@ sudo syncamp status
   { "profileDirs": ["/home/alice/.syncrify"] }
   ```
   then `sudo syncamp restart`. Each backup then runs **as that profile's owner**, not as root.
-- **Dashboard over SSH:** `ssh -L 5801:127.0.0.1:5801 server`, open <http://127.0.0.1:5801/>, and paste the output of
-  `sudo syncamp token`. The service only listens on the loopback address.
+- **Optional browser dashboard (for a headless server you reach over SSH):** `ssh -L 5801:127.0.0.1:5801 server`, open <http://127.0.0.1:5801/>, and paste the output of
+  `sudo syncamp token`. The service only listens on the loopback address. The desktop apps never need this.
 - **Monitoring:** `syncamp status` exits **0** (ok), **1** (warning) or **2** (error/unreachable), so cron, Nagios,
   Zabbix or a shell script can use it directly. `syncamp status -json` is machine-readable and
   `syncamp backup -wait NAME` blocks and fails the script if the backup fails.
 - **Logs:** `journalctl -u SyncAmp` and `/var/lib/syncamp/syncamp.log`.
-- **Desktop tray (optional):** `syncamp-tray-linux-amd64` needs a desktop that supports status-notifier icons
-  (GNOME needs the AppIndicator extension).
+- **Desktop icon (optional):** run `syncamp-app-linux-amd64` as your normal user (and `syncamp-app autostart on` to start it at login). It shows a status icon with a native menu (status, *Back up all now*, *Quit*) and needs a desktop that supports status-notifier icons (GNOME needs the AppIndicator extension). `sudo syncamp install` grants the account that ran it access, using POSIX ACLs (the `acl` package must be installed); otherwise run `sudo syncamp grant YOUR_USER`.
 
 ---
 
@@ -144,10 +94,10 @@ sudo syncamp status
 
 | I want to… | Do this |
 |---|---|
-| See if everything is fine | Look at the tray icon, or `syncamp status` |
-| Back up something right now | Press ▶ next to it in the popover, or `syncamp backup NAME` (`-wait` to wait) |
-| See what happened | **Activity** in the popover, `syncamp history`, or `syncamp logs NAME` for the last run's output |
-| Be warned if a backup silently stops | Expand a backup in the popover → **Alert if overdue**, or `syncamp profile stale NAME 26h` |
+| See if everything is fine | Look at the SyncAmp icon, or `syncamp status` |
+| Back up something right now | Press ▶ next to it in the window, or `syncamp backup NAME` (`-wait` to wait) |
+| See what happened | **Activity** in the window, `syncamp history`, or `syncamp logs NAME` for the last run's output |
+| Be warned if a backup silently stops | Expand a backup in the window → **Alert if overdue**, or `syncamp profile stale NAME 26h` |
 | Pause a profile | `syncamp profile disable NAME` (`enable` to resume) |
 | Check security/config | `syncamp doctor` |
 
@@ -183,7 +133,9 @@ The programs are not code-signed (a certificate costs money), so operating syste
 
 | You see | Why / what to do |
 |---|---|
-| `status` says **No Syncrify profiles found** | SyncAmp can't see your profile folder. On Windows this is the SYSTEM-vs-your-account issue in [step 4](#windows). `syncamp doctor` may name a likely folder. |
+| **No Syncrify profiles found** | SyncAmp can't see your profile folder. On Windows that is the installer checkbox in [step 2](#windows) (or `syncamp watch "C:\Users\you\.syncrify"`). `syncamp doctor` may name a likely folder. |
+| The window says **Not connected** | This account may not read the service's access key. An administrator runs `syncamp grant YOUR_ACCOUNT`. |
+| Clicking the icon does nothing, or a message about **WebView2** | Install the [Microsoft WebView2 Runtime](https://go.microsoft.com/fwlink/p/?LinkId=2124703) (built into Windows 11). Details are in `%LOCALAPPDATA%\SyncAmp\app.log`. |
 | `doctor`: **Syncrify client not found** | `syncamp config set clientPath "<full path to the client program>"` |
 | **Can't reach the Syncrify server** | The `server.url` you set isn't answering. Check the address and port (a fresh Syncrify server listens on plain HTTP port 5800) and try it in a browser. Set it with `syncamp config set server.url https://host:5800`. |
 | "Reachable, but doesn't look like Syncrify" | The URL answered but not to Syncrify's build-number request: wrong port, or a proxy path prefix. |

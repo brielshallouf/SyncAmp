@@ -8,6 +8,11 @@
 package svcclient
 
 import (
+	"crypto/hmac"
+	"crypto/rand"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"io"
 	"net"
 	"net/http"
@@ -89,6 +94,47 @@ func okPath(p string) bool {
 	return true
 }
 
+// IsHex reports whether s is non-empty lowercase/uppercase hex.
+func IsHex(s string) bool {
+	if s == "" {
+		return false
+	}
+	for _, r := range s {
+		if !(r >= '0' && r <= '9' || r >= 'a' && r <= 'f' || r >= 'A' && r <= 'F') {
+			return false
+		}
+	}
+	return true
+}
+
+// Proof is what the real service answers to a nonce: HMAC-SHA256 keyed by the access key.
+func Proof(token, nonce string) string {
+	m := hmac.New(sha256.New, []byte(token))
+	m.Write([]byte("syncamp-proof:" + nonce))
+	return hex.EncodeToString(m.Sum(nil))
+}
+
+// Verify checks that whatever answers at base really knows the access key, using a fresh random
+// nonce. Only a process that has the key can compute the answer, so call this before sending the
+// key anywhere: it defeats a local user who started listening on the port before the service.
+func Verify(h *http.Client, base, token string) bool {
+	b := make([]byte, 16)
+	if _, err := rand.Read(b); err != nil {
+		return false
+	}
+	nonce := hex.EncodeToString(b)
+	resp, err := h.Get(base + "/api/proof?nonce=" + nonce)
+	if err != nil {
+		return false
+	}
+	defer resp.Body.Close()
+	var got struct{ Proof string }
+	if resp.StatusCode != 200 || json.NewDecoder(io.LimitReader(resp.Body, 1024)).Decode(&got) != nil {
+		return false
+	}
+	return hmac.Equal([]byte(got.Proof), []byte(Proof(token, nonce)))
+}
+
 // Do performs one request. Anything outside the allow-list is refused without
 // touching the network.
 func (c *Client) Do(method, path, body string) Result {
@@ -103,6 +149,9 @@ func (c *Client) Do(method, path, body string) Result {
 		req.Header.Set("Content-Type", "application/json")
 	}
 	if t := c.Token(); t != "" && path != "/api/summary" {
+		if !Verify(c.HTTP, "http://"+c.Addr(), t) {
+			return Result{Status: 0, Body: `{"error":"the listener on the service port did not prove it is the SyncAmp service"}`}
+		}
 		req.Header.Set("Authorization", "Bearer "+t)
 	}
 	resp, err := c.HTTP.Do(req)

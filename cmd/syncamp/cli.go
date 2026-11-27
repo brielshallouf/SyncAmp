@@ -19,6 +19,7 @@ import (
 	"github.com/brielshallouf/syncamp/internal/config"
 	"github.com/brielshallouf/syncamp/internal/core"
 	"github.com/brielshallouf/syncamp/internal/store"
+	"github.com/brielshallouf/syncamp/internal/svcclient"
 )
 
 // client talks to the running service's API on behalf of the CLI.
@@ -38,6 +39,9 @@ func newClient(cfgPath string) (*client, error) {
 
 func (c *client) do(method, path string, out any) error {
 	req, _ := http.NewRequest(method, c.base+path, nil)
+	if !svcclient.Verify(c.http, c.base, c.token) {
+		return fmt.Errorf("the listener at %s did not prove it is the SyncAmp service (is another program using that port?)", c.base)
+	}
 	req.Header.Set("Authorization", "Bearer "+c.token)
 	resp, err := c.http.Do(req)
 	if err != nil {
