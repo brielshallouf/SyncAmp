@@ -1,0 +1,5 @@
+/dist/
+*.exe
+/syncamp
+/macos/.build/
+/macos/dist/
