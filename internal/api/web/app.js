@@ -20,7 +20,11 @@ async function api(path, method) {
 }
 function row(table, cells, header) {
   const tr = el('tr');
-  cells.forEach(c => tr.appendChild(c instanceof Node ? c : el(header ? 'th' : 'td', c)));
+  cells.forEach(c => {
+    const cell = el(header ? 'th' : 'td');
+    if (c instanceof Node) cell.appendChild(c); else cell.textContent = c;
+    tr.appendChild(cell);
+  });
   table.appendChild(tr);
 }
 function pill(status) { return el('span', status, 'pill ' + status); }
