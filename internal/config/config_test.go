@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -56,10 +57,10 @@ func TestSaveIsOwnerOnlyAndRoundTrips(t *testing.T) {
 	if err := Save(p, c); err != nil {
 		t.Fatal(err)
 	}
-	if st, _ := os.Stat(p); st.Mode().Perm()&0o077 != 0 {
+	if st, _ := os.Stat(p); runtime.GOOS != "windows" && st.Mode().Perm()&0o077 != 0 { // Windows: ACLs, see platform tests
 		t.Errorf("config mode %v exposes secrets", st.Mode().Perm())
 	}
-	if st, _ := os.Stat(filepath.Dir(p)); st.Mode().Perm()&0o077 != 0 {
+	if st, _ := os.Stat(filepath.Dir(p)); runtime.GOOS != "windows" && st.Mode().Perm()&0o077 != 0 {
 		t.Errorf("config dir mode %v", st.Mode().Perm())
 	}
 	got, err := LoadRaw(p)

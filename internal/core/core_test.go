@@ -2,8 +2,10 @@ package core
 
 import (
 	"context"
+	"encoding/json"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -11,6 +13,14 @@ import (
 	"github.com/brielshallouf/syncamp/internal/monitor"
 	"github.com/brielshallouf/syncamp/internal/store"
 )
+
+// clientPath is an absolute path to a real executable on this OS (Validate requires absolute).
+func clientPath() string {
+	if runtime.GOOS == "windows" {
+		return os.Getenv("ComSpec")
+	}
+	return "/bin/echo"
+}
 
 func newTestEngine(t *testing.T, extraCfg string, profiles map[string]string) (*Engine, string) {
 	t.Helper()
@@ -20,7 +30,9 @@ func newTestEngine(t *testing.T, extraCfg string, profiles map[string]string) (*
 	for n, days := range profiles {
 		_ = os.WriteFile(filepath.Join(pd, n+".syncrify"), []byte("<p><schedulerDays>"+days+"</schedulerDays></p>"), 0o644)
 	}
-	cfg := `{"clientPath":"/bin/echo","profileDirs":["` + pd + `"]` + extraCfg + `}`
+	cp0, _ := json.Marshal(clientPath())
+	pd0, _ := json.Marshal(pd)
+	cfg := `{"clientPath":` + string(cp0) + `,"profileDirs":[` + string(pd0) + `]` + extraCfg + `}`
 	cp := filepath.Join(dir, "config.json")
 	_ = os.WriteFile(cp, []byte(cfg), 0o600)
 	e, err := New(cp)

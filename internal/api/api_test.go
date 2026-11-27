@@ -7,23 +7,47 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"strings"
 	"testing"
 
 	"github.com/brielshallouf/syncamp/internal/core"
 )
 
+// clientPath is an absolute path to *some* real executable on this OS (Config.Validate
+// requires an absolute clientPath, and "/bin/echo" is not absolute on Windows).
+func clientPath() string {
+	if runtime.GOOS == "windows" {
+		return os.Getenv("ComSpec")
+	}
+	return "/bin/echo"
+}
+
+// writeCfg writes config JSON through json.Marshal: pasting a Windows path into a
+// string literal produces invalid escapes like \U.
+func writeCfg(t *testing.T, path string, m map[string]any) {
+	t.Helper()
+	b, err := json.Marshal(m)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, b, 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
 const tok = "0123456789abcdef0123456789abcdef0123456789abcdef"
 
 func newEngine(t *testing.T) *core.Engine {
 	dir := t.TempDir()
 	cfg := filepath.Join(dir, "config.json")
-	_ = os.WriteFile(cfg, []byte(`{"clientPath":"/bin/echo","clientArgs":["{profile}"],"profileDirs":["`+dir+`"],"listenAddr":"127.0.0.1:0"}`), 0o600)
+	writeCfg(t, cfg, map[string]any{"clientPath": clientPath(), "clientArgs": []string{"{profile}"}, "profileDirs": []string{dir}, "listenAddr": "127.0.0.1:0"})
 	_ = os.WriteFile(filepath.Join(dir, "Docs.syncrify"), []byte(`<p><schedulerDays>0</schedulerDays></p>`), 0o600)
 	e, err := core.New(cfg)
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(e.Wait) // let any backup started by a test finish before the temp dir is removed (Windows cannot delete open files)
 	return e
 }
 
@@ -72,7 +96,7 @@ func TestAuthAndHostGuard(t *testing.T) {
 func TestSummaryLeaksNothingSensitive(t *testing.T) {
 	h := Handler(newEngine(t), tok)
 	body := do(h, "GET", "/api/summary", "127.0.0.1:1", "").Body.String()
-	for _, bad := range []string{"Docs", "clientPath", "/bin/echo", "profiles"} {
+	for _, bad := range []string{"Docs", "clientPath", clientPath(), "profiles"} {
 		if strings.Contains(body, bad) {
 			t.Errorf("public summary leaked %q: %s", bad, body)
 		}
@@ -111,7 +135,7 @@ func TestProfilesEndpointHidesFileContents(t *testing.T) {
 func TestEmptyCollectionsAreArraysNotNull(t *testing.T) {
 	dir := t.TempDir()
 	cfg := filepath.Join(dir, "config.json")
-	_ = os.WriteFile(cfg, []byte(`{"clientPath":"/bin/echo","profileDirs":["`+dir+`/none"],"listenAddr":"127.0.0.1:0"}`), 0o600)
+	writeCfg(t, cfg, map[string]any{"clientPath": clientPath(), "profileDirs": []string{filepath.Join(dir, "none")}, "listenAddr": "127.0.0.1:0"})
 	e, err := core.New(cfg)
 	if err != nil {
 		t.Fatal(err)

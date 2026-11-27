@@ -44,7 +44,7 @@ func TestSymlinkOversizeAndBadNamesRefused(t *testing.T) {
 	if err := os.Symlink(secret, filepath.Join(dir, "link.syncrify")); err != nil {
 		t.Skip("symlinks unavailable:", err)
 	}
-	_ = os.WriteFile(filepath.Join(dir, "it's<b>.syncrify"), []byte("<a/>"), 0o600)
+	_ = os.WriteFile(filepath.Join(dir, "semi;colon.syncrify"), []byte("<a/>"), 0o600)
 	_ = os.WriteFile(filepath.Join(dir, ".hidden.syncrify"), []byte("<a/>"), 0o600)
 	_ = os.WriteFile(filepath.Join(dir, "good.syncrify"), []byte("<a><x>1</x></a>"), 0o600)
 	// Oversized: valid XML far beyond the limit must not be fully read.

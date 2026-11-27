@@ -32,6 +32,18 @@ func (w *Writer) open() error {
 	return nil
 }
 
+// Close releases the file handle (Windows cannot delete or rotate an open file).
+func (w *Writer) Close() error {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if w.f == nil {
+		return nil
+	}
+	err := w.f.Close()
+	w.f = nil
+	return err
+}
+
 // Write implements io.Writer.
 func (w *Writer) Write(p []byte) (int, error) {
 	w.mu.Lock()

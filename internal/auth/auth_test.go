@@ -3,6 +3,7 @@ package auth
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 )
 
@@ -16,7 +17,7 @@ func TestTokenLifecycle(t *testing.T) {
 	if a != b {
 		t.Error("token must be stable across restarts")
 	}
-	if st, _ := os.Stat(filepath.Join(dir, FileName)); st.Mode().Perm()&0o077 != 0 {
+	if st, _ := os.Stat(filepath.Join(dir, FileName)); runtime.GOOS != "windows" && st.Mode().Perm()&0o077 != 0 { // Windows: ACLs, see platform tests
 		t.Errorf("token file mode %v", st.Mode().Perm())
 	}
 	if !Equal(a, b) || Equal(a, "x") || Equal("", a) {
