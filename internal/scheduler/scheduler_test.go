@@ -54,3 +54,19 @@ func TestParseDays(t *testing.T) {
 		t.Error("expected error")
 	}
 }
+
+func TestDescribe(t *testing.T) {
+	all := []time.Weekday{0, 1, 2, 3, 4, 5, 6}
+	cases := map[string]Spec{
+		"Every 6h":                {Interval: 6 * time.Hour},
+		"Every 90m":               {Interval: 90 * time.Minute},
+		"Daily · 02:00":           {Days: all, Times: []string{"02:00"}},
+		"Mon, Wed · 02:00, 14:30": {Days: []time.Weekday{1, 3}, Times: []string{"02:00", "14:30"}},
+		"Manual":                  {},
+	}
+	for want, s := range cases {
+		if got := s.Describe(); got != want {
+			t.Errorf("got %q want %q", got, want)
+		}
+	}
+}

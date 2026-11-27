@@ -46,7 +46,7 @@ struct PopoverView: View {
         if s.overall == "ok" || s.overall == "running" {
             parts.append(s.lastBackup.map { "Last backup \(relative($0))" } ?? "No backups yet")
         } else { parts.append(s.summary) }
-        if let srv = s.server { parts.append(srv.up ? "Server online" : "Server unreachable") }
+        if let srv = s.server { parts.append(srv.up ? "Server reachable" : "Can't reach server") }
         return parts.joined(separator: " · ")
     }
 

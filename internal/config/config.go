@@ -23,7 +23,8 @@ type Override struct {
 	Interval string   `json:"interval,omitempty"` // e.g. "4h"; alternative to days/times
 }
 
-// Server describes the Syncrify *server* to health-check (optional).
+// Server is the Syncrify server this client backs up to. It is only used for a
+// connection check (reachability from this machine); SyncAmp never administers it.
 type Server struct {
 	URL           string `json:"url,omitempty"` // e.g. https://backup.lan:5800
 	CheckInterval string `json:"checkInterval,omitempty"`

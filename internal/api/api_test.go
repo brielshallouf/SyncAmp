@@ -1,6 +1,7 @@
 package api
 
 import (
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -123,5 +124,81 @@ func TestEmptyCollectionsAreArraysNotNull(t *testing.T) {
 	}
 	if b := do(h, "GET", "/api/status", "127.0.0.1:1", tok).Body.String(); !strings.Contains(b, `"profiles":[]`) {
 		t.Errorf("status.profiles must be []: %s", b)
+	}
+}
+
+func post(h http.Handler, path, body, bearer string) *httptest.ResponseRecorder {
+	r := httptest.NewRequest("POST", path, strings.NewReader(body))
+	r.Host = "127.0.0.1:5801"
+	if bearer != "" {
+		r.Header.Set("Authorization", "Bearer "+bearer)
+	}
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, r)
+	return w
+}
+
+func presetOf(t *testing.T, h http.Handler, name string) (preset string, paused bool) {
+	var st struct {
+		Profiles []struct {
+			Name   string `json:"name"`
+			Preset string `json:"preset"`
+			Paused bool   `json:"paused"`
+		}
+	}
+	body := do(h, "GET", "/api/status", "127.0.0.1:5801", tok).Body.Bytes()
+	if err := json.Unmarshal(body, &st); err != nil {
+		t.Fatal(err)
+	}
+	for _, p := range st.Profiles {
+		if p.Name == name {
+			return p.Preset, p.Paused
+		}
+	}
+	t.Fatalf("profile %s missing", name)
+	return
+}
+
+func TestScheduleEndpoint(t *testing.T) {
+	e := newEngine(t)
+	h := Handler(e, tok)
+	const path = "/api/profiles/Docs/schedule"
+	if c := post(h, path, `{"preset":"hourly"}`, "").Code; c != 401 {
+		t.Errorf("needs token: %d", c)
+	}
+	if c := post(h, path, `{"preset":"hourly"}`, tok).Code; c != 200 {
+		t.Fatalf("hourly: %d", c)
+	}
+	if p, _ := presetOf(t, h, "Docs"); p != "hourly" {
+		t.Errorf("preset after hourly = %q", p)
+	}
+	post(h, path, `{"preset":"every6h","enabled":false}`, tok)
+	if p, paused := presetOf(t, h, "Docs"); p != "every6h" || !paused {
+		t.Errorf("want every6h+paused, got %q paused=%v", p, paused)
+	}
+	post(h, path, `{"enabled":true,"preset":"daily"}`, tok)
+	if p, paused := presetOf(t, h, "Docs"); p != "daily" || paused {
+		t.Errorf("want daily+active, got %q paused=%v", p, paused)
+	}
+	post(h, path, `{"preset":"profile"}`, tok)
+	if p, _ := presetOf(t, h, "Docs"); p != "profile" {
+		t.Errorf("revert: %q", p)
+	}
+	for body, want := range map[string]int{
+		`{"preset":"every-second"}`: 400, `{"preset":1}`: 400, `{"bogus":true}`: 400, `not json`: 400,
+	} {
+		if c := post(h, path, body, tok).Code; c != want {
+			t.Errorf("%s: got %d want %d", body, c, want)
+		}
+	}
+	if c := post(h, "/api/profiles/Nope/schedule", `{"preset":"hourly"}`, tok).Code; c != 404 {
+		t.Errorf("unknown profile: %d", c)
+	}
+	if st, err := os.Stat(e.CfgPath()); err != nil || st.Mode().Perm()&0o077 != 0 {
+		t.Errorf("config must stay owner-only after API edits: %v %v", st, err)
+	}
+	raw, _ := os.ReadFile(e.CfgPath())
+	if strings.Contains(string(raw), "Nope") {
+		t.Error("unknown profile leaked into config")
 	}
 }

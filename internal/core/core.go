@@ -5,6 +5,7 @@ package core
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
 	"path/filepath"
@@ -27,6 +28,7 @@ type Engine struct {
 	cfgPath string
 	hist    *store.Store
 
+	cfgMu   sync.Mutex // serialises config file read-modify-write
 	mu      sync.RWMutex
 	cfg     config.Config
 	profs   []profiles.Profile
@@ -128,18 +130,16 @@ func (e *Engine) specFor(p profiles.Profile) (scheduler.Spec, bool) {
 	return e.specForLocked(p)
 }
 
-// specForLocked requires e.mu to be held (read or write).
+// specForLocked requires e.mu to be held (read or write). ok=false means "do
+// not auto-run" (manual-only, or paused); the returned spec is still the
+// configured schedule so the UI can show what resumes when un-paused.
 func (e *Engine) specForLocked(p profiles.Profile) (scheduler.Spec, bool) {
 	ov := e.cfg.Profiles[p.Name]
-	if ov.Enabled != nil && !*ov.Enabled {
-		return scheduler.Spec{}, false
-	}
-	if ov.Interval != "" {
-		if d := config.Dur(ov.Interval, 0); d > 0 {
-			return scheduler.Spec{Interval: d}, true
-		}
-	}
+	paused := ov.Enabled != nil && !*ov.Enabled
 	spec := scheduler.Spec{Days: p.Days, Times: e.cfg.DefaultTimes}
+	if d := config.Dur(ov.Interval, 0); ov.Interval != "" && d > 0 {
+		return scheduler.Spec{Interval: d}, !paused
+	}
 	if len(ov.Days) > 0 {
 		if d, err := scheduler.ParseDays(ov.Days); err == nil {
 			spec.Days = d
@@ -148,7 +148,7 @@ func (e *Engine) specForLocked(p profiles.Profile) (scheduler.Spec, bool) {
 	if len(ov.Times) > 0 {
 		spec.Times = ov.Times
 	}
-	return spec, len(spec.Days) > 0 && len(spec.Times) > 0
+	return spec, !paused && len(spec.Days) > 0 && len(spec.Times) > 0
 }
 
 // RunProfile starts a backup asynchronously. Returns an error if the profile
@@ -241,9 +241,9 @@ func (e *Engine) monitorLoop(ctx context.Context) {
 			e.wasUp = &up
 			e.mu.Unlock()
 			if changed {
-				msg := "Syncrify server is back UP"
+				msg := "Connection to the Syncrify server is restored"
 				if !h.Up {
-					msg = "Syncrify server is DOWN: " + h.Error
+					msg = "Can't reach the Syncrify server: " + h.Error
 				}
 				_ = notify.Send(ctx, webhook, msg)
 			}
@@ -272,7 +272,9 @@ type ProfileStatus struct {
 	Path      string     `json:"path"`
 	Running   bool       `json:"running"`
 	Scheduled bool       `json:"scheduled"`
-	Paused    bool       `json:"paused"` // explicitly disabled in config
+	Paused    bool       `json:"paused"`   // explicitly disabled in config
+	Schedule  string     `json:"schedule"` // human summary, e.g. "Every 6h"
+	Preset    string     `json:"preset"`   // hourly | every6h | daily | profile (profile's own / custom)
 	Last      *store.Run `json:"last,omitempty"`
 }
 
@@ -308,9 +310,22 @@ func (e *Engine) Status() Status {
 	failed, running := 0, 0
 	for _, p := range profs {
 		ps := ProfileStatus{Name: p.Name, Path: p.Path, Running: e.running[p.Name]}
-		_, ps.Scheduled = e.specForLocked(p)
+		spec, sched := e.specForLocked(p)
+		ps.Scheduled = sched
 		if ov := e.cfg.Profiles[p.Name]; ov.Enabled != nil && !*ov.Enabled {
 			ps.Paused = true
+		}
+		ps.Schedule, ps.Preset = "Manual", "profile"
+		if sched || (ps.Paused && (spec.Interval > 0 || (len(spec.Days) > 0 && len(spec.Times) > 0))) {
+			ps.Schedule = spec.Describe()
+			switch {
+			case spec.Interval == time.Hour:
+				ps.Preset = "hourly"
+			case spec.Interval == 6*time.Hour:
+				ps.Preset = "every6h"
+			case spec.Interval == 0 && len(spec.Days) == 7 && len(e.cfg.Profiles[p.Name].Times) == 0:
+				ps.Preset = "daily"
+			}
 		}
 		if r, ok := e.hist.Last(p.Name); ok {
 			rr := r
@@ -330,7 +345,7 @@ func (e *Engine) Status() Status {
 	case failed > 0:
 		st.Overall, st.Summary = "error", fmt.Sprintf("%d profile(s) failed on last run", failed)
 	case st.Server != nil && !st.Server.Up:
-		st.Overall, st.Summary = "error", "Syncrify server unreachable"
+		st.Overall, st.Summary = "error", "Can't reach the Syncrify server"
 	case hasLevel(st.Findings, audit.Fail):
 		st.Overall, st.Summary = "error", "configuration problem: run `syncamp doctor`"
 	case !st.ClientOK:
@@ -363,3 +378,57 @@ func (e *Engine) Config() config.Config {
 
 // CfgPath returns the config file path.
 func (e *Engine) CfgPath() string { return e.cfgPath }
+
+// ErrUnknownProfile is returned when a name matches no discovered profile.
+var ErrUnknownProfile = errors.New("unknown profile")
+
+// ErrBadPreset is returned for an unsupported schedule preset.
+var ErrBadPreset = errors.New("unknown preset (use hourly, every6h, daily or profile)")
+
+// UpdateSchedule changes a profile's override in the config file and reloads.
+// enabled (optional) pauses/resumes automatic runs; preset (optional) picks a
+// schedule: hourly, every6h, daily (every day at the default time), or
+// profile (revert to the schedule stored in the Syncrify profile itself).
+// Only discovered profiles can be edited, so the API cannot grow arbitrary config.
+func (e *Engine) UpdateSchedule(name string, enabled *bool, preset string) error {
+	known := false
+	for _, p := range e.Profiles() {
+		known = known || p.Name == name
+	}
+	if !known {
+		return ErrUnknownProfile
+	}
+	e.cfgMu.Lock()
+	defer e.cfgMu.Unlock()
+	cfg, err := config.LoadRaw(e.cfgPath)
+	if err != nil {
+		return fmt.Errorf("read config: %w", err)
+	}
+	if cfg.Profiles == nil {
+		cfg.Profiles = map[string]config.Override{}
+	}
+	ov := cfg.Profiles[name]
+	if enabled != nil {
+		ov.Enabled = enabled
+	}
+	switch preset {
+	case "":
+	case "hourly":
+		ov.Interval, ov.Days, ov.Times = "1h", nil, nil
+	case "every6h":
+		ov.Interval, ov.Days, ov.Times = "6h", nil, nil
+	case "daily":
+		ov.Interval, ov.Times = "", nil
+		ov.Days = []string{"sun", "mon", "tue", "wed", "thu", "fri", "sat"}
+	case "profile":
+		ov.Interval, ov.Days, ov.Times = "", nil, nil
+	default:
+		return ErrBadPreset
+	}
+	cfg.Profiles[name] = ov
+	if err := config.Save(e.cfgPath, cfg); err != nil {
+		return err
+	}
+	e.Reload()
+	return nil
+}

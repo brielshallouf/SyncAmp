@@ -15,6 +15,7 @@ package api
 import (
 	"embed"
 	"encoding/json"
+	"errors"
 	"net"
 	"net/http"
 	"strings"
@@ -88,6 +89,28 @@ func Handler(e *core.Engine, token string) http.Handler {
 			return
 		}
 		writeJSON(w, 202, map[string]string{"status": "started"})
+	}))
+	mux.HandleFunc("POST /api/profiles/{name}/schedule", protected(func(w http.ResponseWriter, r *http.Request) {
+		var body struct {
+			Enabled *bool  `json:"enabled"`
+			Preset  string `json:"preset"`
+		}
+		dec := json.NewDecoder(r.Body)
+		dec.DisallowUnknownFields()
+		if err := dec.Decode(&body); err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid body"})
+			return
+		}
+		switch err := e.UpdateSchedule(r.PathValue("name"), body.Enabled, body.Preset); {
+		case errors.Is(err, core.ErrUnknownProfile):
+			writeJSON(w, http.StatusNotFound, map[string]string{"error": err.Error()})
+		case errors.Is(err, core.ErrBadPreset):
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		case err != nil:
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "could not save schedule"})
+		default:
+			writeJSON(w, http.StatusOK, map[string]string{"status": "saved"})
+		}
 	}))
 	mux.HandleFunc("POST /api/run", protected(func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 202, map[string]int{"started": e.RunAll("manual")})

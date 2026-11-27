@@ -76,3 +76,30 @@ func (s Spec) Due(prev, now, lastRun time.Time) bool {
 func startOfDay(t time.Time) time.Time {
 	return time.Date(t.Year(), t.Month(), t.Day(), 0, 0, 0, 0, t.Location())
 }
+
+// ShortDur renders 6h0m0s as "6h" and 90m as "90m".
+func ShortDur(d time.Duration) string {
+	if d%time.Hour == 0 {
+		return fmt.Sprintf("%dh", int(d/time.Hour))
+	}
+	return fmt.Sprintf("%dm", int(d/time.Minute))
+}
+
+// Describe is a short human summary: "Every 6h", "Daily · 02:00", "Mon, Wed · 02:00".
+func (s Spec) Describe() string {
+	if s.Interval > 0 {
+		return "Every " + ShortDur(s.Interval)
+	}
+	if len(s.Days) == 0 || len(s.Times) == 0 {
+		return "Manual"
+	}
+	days := "Daily"
+	if len(s.Days) < 7 {
+		names := make([]string, len(s.Days))
+		for i, d := range s.Days {
+			names[i] = d.String()[:3]
+		}
+		days = strings.Join(names, ", ")
+	}
+	return days + " · " + strings.Join(s.Times, ", ")
+}

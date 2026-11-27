@@ -38,7 +38,7 @@ Windows cannot drop privileges per profile the way the Linux build does. Syncrif
 - History and logs are not tamper-evident; webhook messages contain profile names and error text.
 - The API is plain HTTP on loopback; do not forward it to a network without TLS (e.g. use an SSH tunnel).
 - Binaries are not code-signed; verify `SHA256SUMS` and build from source if in doubt.
-- Syncrify client/server vulnerabilities, server-side access control and backup encryption are outside SyncAmp.
+- Syncrify client/server vulnerabilities, server-side access control and backup encryption are outside SyncAmp (it is a client-side tool and does not manage the server).
 
 ## Reporting
 Open a private security advisory on the repository.

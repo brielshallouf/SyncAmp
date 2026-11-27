@@ -1,4 +1,5 @@
-// Package monitor health-checks the Syncrify server's web endpoint.
+// Package monitor is the client's connection check: can this machine reach the
+// Syncrify server's web endpoint? (It never administers the server.)
 package monitor
 
 import (

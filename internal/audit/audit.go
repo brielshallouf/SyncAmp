@@ -66,7 +66,7 @@ func Check(cfgPath string, cfg config.Config) []Finding {
 	}
 	// Transport.
 	if cfg.Server.URL == "" {
-		add(Info, "server.url not set: server reachability is not monitored")
+		add(Info, "server.url not set: the connection check to your Syncrify server is off")
 	} else if u, err := url.Parse(cfg.Server.URL); err == nil && u.Scheme == "http" && !loopback(u.Hostname()) {
 		add(Warn, "server.url uses plain http: backup traffic may cross the network unencrypted; use https")
 	}

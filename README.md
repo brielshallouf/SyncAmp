@@ -4,6 +4,8 @@ A cross-platform (Windows, macOS, Linux) service with a glass-style dashboard an
 [Syncrify](https://web.synametrics.com/) backup client: scheduling, monitoring,
 failure detection and alerts, with one binary and one config on every OS.
 
+**Scope: this is the *client-side* companion.** It runs on each machine that is being backed up and supervises that machine's Syncrify client. It does not administer a Syncrify *server* (users, quotas, storage, server settings): use Syncrify's own web console for that. The only server-related feature is a connection check, i.e. "can this machine reach the server?".
+
 SyncAmp is independent of Synametrics. It does **not** reimplement the Syncrify
 protocol; it drives the official client, so you keep Syncrify's delta engine,
 encryption and server compatibility.
@@ -25,7 +27,7 @@ From Synametrics' documentation:
 | Console client may print a failure and still exit 0 | Exit code **and** output patterns decide success; timeouts kill the whole process tree |
 | No at-a-glance status | Tray icon (green/blue/amber/red) + local web dashboard |
 | No alerting | Webhook (Slack/Teams/ntfy-style) on failed backups and server up/down changes |
-| Server health is opaque | Optional periodic server reachability check |
+| No hint when the server can't be reached | Optional connection check from this machine to your Syncrify server, with alerts |
 | Profiles are per-user | Scans every user's `~/.syncrify`, so a SYSTEM service finds profiles created by the logged-in user |
 
 ## Architecture
@@ -81,7 +83,8 @@ open dist/SyncAmp.app                     # menu-bar only (no Dock icon); ⋯ me
 
 The app is SwiftUI with **zero third-party dependencies**: `glassEffect` on macOS 26 (Tahoe), system materials on macOS 14–15. Click the menu-bar icon for the popover: a state ring, one row per backup with a play button, "Back up all", and a ⋯ menu (dashboard, launch at login, quit).
 
-The same design language powers the web dashboard (`http://127.0.0.1:5801/`) used on Windows/Linux and over SSH tunnels.
+### Windows / Linux tray popover
+`syncamp-tray` opens the dashboard as a compact chromeless window (Edge on Windows, Chromium-family on Linux). On Windows it is placed in the corner next to the taskbar, **whichever edge the taskbar is docked to** (top, bottom, left or right); there is deliberately no pointer arrow. Expand a backup to pause/resume it or pick **Hourly / Every 6 h / Daily** (also available as `syncamp profile schedule` and `POST /api/profiles/NAME/schedule`). The same page works in any browser and over SSH tunnels (`http://127.0.0.1:5801/`).
 
 ## Configuration
 
@@ -129,4 +132,4 @@ All shipped binaries (Windows/Linux × amd64/arm64) scan clean with `govulncheck
 - **Untested here:** the hardened systemd unit (no systemd in the build sandbox) — run `systemctl status syncamp` after install and report any sandbox denial.
 - **Never tested with a real Syncrify client/server.** The profile XML schema beyond `schedulerDays` is inferred; `failurePatterns` are heuristics to tune against real client output.
 - Slots missed while the service was *stopped* are not replayed (only sleep/late ticks are).
-- Not implemented: MSI installer, code signing, restore verification, server-side management.
+- Not implemented: MSI installer, code signing, restore verification. Out of scope by design: Syncrify server administration.

@@ -77,7 +77,7 @@ func onReady(base, token string) {
 		for {
 			select {
 			case <-mOpen.ClickedCh:
-				_ = platform.OpenBrowser(base + "/")
+				_ = platform.OpenPanel(base + "/")
 			case <-mRun.ClickedCh:
 				post("/api/run")
 				poll()
