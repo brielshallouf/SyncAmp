@@ -51,6 +51,7 @@ Operate (talk to the running service; need Administrator/root to read the token)
 Configure
   init                     write a default config
   config show|validate|set KEY VALUE
+  watch|unwatch FOLDER     add/remove a folder of Syncrify profiles for SyncAmp to use
   profile enable|disable|reset NAME
   profile stale NAME auto|26h   alert when no successful backup within that long
   profile schedule NAME [-days mon,wed] [-times 02:00] [-interval 6h]   (scheduler mode)
@@ -198,6 +199,8 @@ func run() int {
 		return cmdConfig(*cfgPath, rest)
 	case "profile":
 		return cmdProfile(*cfgPath, rest)
+	case "watch", "unwatch":
+		return cmdWatch(*cfgPath, cmd, rest)
 	case "profiles":
 		e, err := core.New(*cfgPath)
 		if err != nil {

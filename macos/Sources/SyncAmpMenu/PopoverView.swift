@@ -120,7 +120,7 @@ struct PopoverView: View {
     private var unreachable: some View {
         VStack(spacing: 6) {
             Text(model.message ?? "The SyncAmp service isn't running.").font(.callout)
-            Text("Install it with “syncamp install”, then “syncamp start”.")
+            Text(ServiceSetup.canSelfInstall ? "SyncAmp is setting it up…" : "Install it with “syncamp install”, then “syncamp start”.")
                 .font(.caption).foregroundStyle(.secondary)
         }
         .multilineTextAlignment(.center).padding(16).frame(maxWidth: .infinity).glassCard(radius: 18)
@@ -134,7 +134,6 @@ struct PopoverView: View {
                 .disabled(!model.reachable || model.limited || (model.status?.profiles.isEmpty ?? true))
             Spacer()
             Menu {
-                Button("Open dashboard") { NSWorkspace.shared.open(model.client.base) }
                 Toggle("Launch at login", isOn: Binding(get: { launchAtLogin }, set: setLaunchAtLogin))
                 Divider()
                 Button("Quit SyncAmp") { NSApplication.shared.terminate(nil) }.keyboardShortcut("q")

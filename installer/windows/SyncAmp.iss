@@ -39,6 +39,12 @@ Source: "..\..\LICENSE";     DestDir: "{app}"; Flags: ignoreversion
 Source: "..\..\README.md";   DestDir: "{app}"; Flags: ignoreversion
 Source: "..\..\SECURITY.md"; DestDir: "{app}"; Flags: ignoreversion
 
+[Tasks]
+; Off by default on purpose: the background service runs as SYSTEM and a Syncrify profile can run scripts,
+; so watching a folder YOU can write to lets anything running as you start a script as SYSTEM.
+; Tick it on a personal PC where you accept that, or use `syncamp watch FOLDER` later.
+Name: "watchprofiles"; Description: "Let SyncAmp see my Syncrify profiles in {userprofile}\.syncrify (personal PC)"; GroupDescription: "Syncrify profiles:"; Flags: unchecked
+
 [Icons]
 Name: "{autoprograms}\SyncAmp"; Filename: "{app}\{#AppExe}"
 
@@ -90,15 +96,25 @@ begin
 end;
 
 procedure CurStepChanged(CurStep: TSetupStep);
+var ok: Boolean;
 begin
   if CurStep = ssPostInstall then
   begin
-    if Svc('install') <> 0 then
+    ok := Svc('install') = 0;
+    if not ok then
       MsgBox('SyncAmp could not set up its background service. Open an Administrator terminal and run:' + #13#10 +
-        '"' + ExpandConstant('{app}\{#ServiceExe}') + '" doctor', mbError, MB_OK)
-    else if Svc('start') <> 0 then
-      MsgBox('SyncAmp installed but its background service did not start. Run:' + #13#10 +
         '"' + ExpandConstant('{app}\{#ServiceExe}') + '" doctor', mbError, MB_OK);
+
+    { Only when the box was ticked. Written as nested ifs on purpose: never rely on short-circuit evaluation here. }
+    if ok then
+      if WizardIsTaskSelected('watchprofiles') then
+        if Svc('watch "' + ExpandConstant('{userprofile}') + '\.syncrify"') <> 0 then
+          MsgBox('SyncAmp installed, but could not add your Syncrify profile folder. Run "syncamp watch <folder>" later.', mbError, MB_OK);
+
+    if ok then
+      if Svc('start') <> 0 then
+        MsgBox('SyncAmp installed but its background service did not start. Run:' + #13#10 +
+          '"' + ExpandConstant('{app}\{#ServiceExe}') + '" doctor', mbError, MB_OK);
   end;
 end;
 

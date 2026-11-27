@@ -9,6 +9,14 @@ swift build -c release --arch arm64 --arch x86_64
 APP="dist/SyncAmp.app"
 rm -rf "$APP"; mkdir -p "$APP/Contents/MacOS"
 cp ".build/apple/Products/Release/SyncAmpMenu" "$APP/Contents/MacOS/SyncAmpMenu"
+# One download: bundle the background service (a universal `syncamp`) inside the app.
+if [ -n "${SYNCAMP_BIN:-}" ]; then
+  mkdir -p "$APP/Contents/Resources"
+  cp "$SYNCAMP_BIN" "$APP/Contents/Resources/syncamp"
+  chmod 755 "$APP/Contents/Resources/syncamp"
+else
+  echo "note: SYNCAMP_BIN not set, so the app will not be able to install the service by itself"
+fi
 cat > "$APP/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">

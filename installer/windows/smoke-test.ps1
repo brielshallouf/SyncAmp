@@ -21,7 +21,8 @@ Get-Content "$env:ProgramData\SyncAmp\grants"
 Section 'point it at a real profile and a client, restart'
 New-Item -ItemType Directory "$env:USERPROFILE\.syncrify" -Force | Out-Null
 Set-Content "$env:USERPROFILE\.syncrify\Demo.syncrify" '<p><schedulerDays>127</schedulerDays></p>'
-@{ profileDirs = @("$env:USERPROFILE\.syncrify"); clientPath = $env:ComSpec } | ConvertTo-Json | Set-Content "$env:ProgramData\SyncAmp\config.json"
+& "$app\syncamp.exe" watch "$env:USERPROFILE\.syncrify"
+& "$app\syncamp.exe" config set clientPath $env:ComSpec
 & "$app\syncamp.exe" restart
 Start-Sleep -Seconds 4
 & "$app\syncamp.exe" doctor

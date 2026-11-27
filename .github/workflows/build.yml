@@ -69,8 +69,19 @@ jobs:
     continue-on-error: true
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
+        with:
+          go-version-file: go.mod
+      - name: Build the universal background service to bundle inside the app
+        run: |
+          CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 go build -trimpath -ldflags "-s -w" -o "$RUNNER_TEMP/syncamp-arm64" ./cmd/syncamp
+          CGO_ENABLED=0 GOOS=darwin GOARCH=amd64 go build -trimpath -ldflags "-s -w" -o "$RUNNER_TEMP/syncamp-amd64" ./cmd/syncamp
+          lipo -create -output "$RUNNER_TEMP/syncamp" "$RUNNER_TEMP/syncamp-arm64" "$RUNNER_TEMP/syncamp-amd64"
+          lipo -info "$RUNNER_TEMP/syncamp"
       - name: Build SyncAmp.app (runs the Swift unit tests first)
         working-directory: macos
+        env:
+          SYNCAMP_BIN: ${{ runner.temp }}/syncamp
         run: ./build-app.sh
       - name: Zip the app
         working-directory: macos/dist

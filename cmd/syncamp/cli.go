@@ -394,6 +394,38 @@ func cmdProfile(cfgPath string, args []string) int {
 	return saveAndReload(cfgPath, cfg)
 }
 
+// cmdWatch adds/removes a folder of Syncrify profiles that SyncAmp should look at.
+func cmdWatch(cfgPath, cmd string, args []string) int {
+	if len(args) != 1 || !filepath.IsAbs(args[0]) {
+		fmt.Fprintf(os.Stderr, "usage: syncamp %s FULL_PATH_TO_PROFILE_FOLDER\n", cmd)
+		return 2
+	}
+	dir := filepath.Clean(args[0])
+	cfg, err := config.LoadRaw(cfgPath)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "error:", err)
+		return 1
+	}
+	var kept []string
+	have := false
+	for _, d := range cfg.ProfileDirs {
+		if strings.EqualFold(filepath.Clean(d), dir) {
+			have = true
+			if cmd == "unwatch" {
+				continue
+			}
+		}
+		kept = append(kept, d)
+	}
+	if cmd == "watch" && !have {
+		kept = append(kept, dir)
+		fmt.Println("Note: Syncrify profiles can run scripts, and SyncAmp starts backups with the service's rights.\n" +
+			"Only watch a folder that nobody you don't trust can write to.")
+	}
+	cfg.ProfileDirs = kept
+	return saveAndReload(cfgPath, cfg)
+}
+
 func saveAndReload(cfgPath string, cfg config.Config) int {
 	if err := config.Save(cfgPath, cfg); err != nil {
 		fmt.Fprintln(os.Stderr, "error:", err)

@@ -11,6 +11,7 @@ final class StatusModel {
     private(set) var limited = false
     let client = SyncAmpClient()
     private var poller: Task<Void, Never>?
+    private var triedSetup = false
 
     init() {
         limited = !client.hasToken
@@ -43,6 +44,13 @@ final class StatusModel {
         } catch {
             reachable = false
             message = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
+            // First launch (or the service was removed): set it up ourselves, once per app run.
+            if !triedSetup, ServiceSetup.canSelfInstall {
+                triedSetup = true
+                message = "Setting up the background service…"
+                if let failure = await ServiceSetup.installAndStart() { message = failure }
+                else { try? await Task.sleep(for: .seconds(2)); await refresh() }
+            }
         }
     }
 

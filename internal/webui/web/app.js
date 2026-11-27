@@ -160,7 +160,7 @@ async function load() {
     const nl = $('notices'); nl.replaceChildren();
     (s.findings || []).forEach(f => nl.appendChild(el('li', f.msg, f.level)));
     (s.skippedProfiles || []).forEach(k => nl.appendChild(el('li', 'Skipped ' + k.path + ': ' + k.reason, 'WARN')));
-    fill($('profiles'), s.profiles.map(profileItem), 'No Syncrify profiles found');
+    fill($('profiles'), s.profiles.map(profileItem), 'No Syncrify profiles found. SyncAmp may not be looking in the right folder: run “syncamp doctor” to see where, and “syncamp watch <folder>” to add one.');
     fill($('history'), h.slice(0, 5).map(historyItem), 'No activity yet');
     $('runall').disabled = !s.profiles.length;
     $('meta').textContent = s.os + ' · up ' + s.uptime;
